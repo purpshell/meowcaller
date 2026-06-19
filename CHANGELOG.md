@@ -7,6 +7,11 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/toc
+- scaffolded: SmplTOC type + ParseSmplTOC signature + exhaustive KAT test wired
+  to testdata/toc_vectors.json (256 byte values). Body is TODO; test fails until
+  implemented.
+
 ### Planning
 - Datasheets for all 28 modules under `datasheets/`: each carries the reference
   source verbatim, the Go envelope (signatures only), and implementation
