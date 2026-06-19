@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/pulse — module #08 scaffold (reference `ed12f35`)
+- Scaffolded the excitation pulse decode: `SmplPulseResult`, `Mem8Static` (the
+  static 0xe8990 rodata helper, with the verbatim count-byte table), and
+  `DecodeSmplPulses` — TODO stubs with `Source of truth:` pins.
+- KAT `TestDecodeSmplPulses` (pulse_vectors.json) is wired to the real
+  LSF(0)→pulses(0) chain (LSF decode already exists) and **fails until the body
+  lands** — the honest scaffold state, no skip needed. This is the module #07 pitch
+  KAT was waiting on: once pulses decode, the range coder reaches the pitch block.
+
 ### mlow/pitch — module #07 scaffold (reference `ed12f35`)
 - Scaffolded the pitch/LTP envelope: decode side (`SmplPitchResult`,
   `DecodeSmplPitch`) and estimator side (`PitchEstState`+`ResetCond`, `PitchResult`,
