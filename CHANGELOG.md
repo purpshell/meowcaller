@@ -8,9 +8,10 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 ## [Unreleased]
 
 ### mlow/toc
+- KAT-verified: ParseSmplTOC matches toc_vectors.json (256/256 byte values).
+- implemented: ParseSmplTOC body + standardOpusFrameMs helper.
 - scaffolded: SmplTOC type + ParseSmplTOC signature + exhaustive KAT test wired
-  to testdata/toc_vectors.json (256 byte values). Body is TODO; test fails until
-  implemented.
+  to testdata/toc_vectors.json (256 byte values).
 
 ### Planning
 - Datasheets for all 28 modules under `datasheets/`: each carries the reference
