@@ -471,6 +471,814 @@ func (x *LsfStage2S3) GetCoeff() []*Cdf {
 	return nil
 }
 
+// Generic nested-float wrappers (protobuf has no nested repeated): F<N> is a
+// depth-N `[[...float]]`. Shared with the reference tables.proto.
+type F1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	V             []float32              `protobuf:"fixed32,1,rep,packed,name=v,proto3" json:"v,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *F1) Reset() {
+	*x = F1{}
+	mi := &file_tables_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *F1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*F1) ProtoMessage() {}
+
+func (x *F1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use F1.ProtoReflect.Descriptor instead.
+func (*F1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *F1) GetV() []float32 {
+	if x != nil {
+		return x.V
+	}
+	return nil
+}
+
+type F2 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*F1                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *F2) Reset() {
+	*x = F2{}
+	mi := &file_tables_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *F2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*F2) ProtoMessage() {}
+
+func (x *F2) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use F2.ProtoReflect.Descriptor instead.
+func (*F2) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *F2) GetD() []*F1 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type F3 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*F2                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *F3) Reset() {
+	*x = F3{}
+	mi := &file_tables_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *F3) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*F3) ProtoMessage() {}
+
+func (x *F3) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use F3.ProtoReflect.Descriptor instead.
+func (*F3) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *F3) GetD() []*F2 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type F4 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*F3                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *F4) Reset() {
+	*x = F4{}
+	mi := &file_tables_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *F4) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*F4) ProtoMessage() {}
+
+func (x *F4) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use F4.ProtoReflect.Descriptor instead.
+func (*F4) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *F4) GetD() []*F3 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type F5 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*F4                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *F5) Reset() {
+	*x = F5{}
+	mi := &file_tables_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *F5) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*F5) ProtoMessage() {}
+
+func (x *F5) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use F5.ProtoReflect.Descriptor instead.
+func (*F5) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *F5) GetD() []*F4 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+// Generic uint32 / int32 nests (index & CMF tables: pitch, lsf_cb).
+type U1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	V             []uint32               `protobuf:"varint,1,rep,packed,name=v,proto3" json:"v,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *U1) Reset() {
+	*x = U1{}
+	mi := &file_tables_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *U1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*U1) ProtoMessage() {}
+
+func (x *U1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use U1.ProtoReflect.Descriptor instead.
+func (*U1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *U1) GetV() []uint32 {
+	if x != nil {
+		return x.V
+	}
+	return nil
+}
+
+type I1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	V             []int32                `protobuf:"varint,1,rep,packed,name=v,proto3" json:"v,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *I1) Reset() {
+	*x = I1{}
+	mi := &file_tables_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *I1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*I1) ProtoMessage() {}
+
+func (x *I1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use I1.ProtoReflect.Descriptor instead.
+func (*I1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *I1) GetV() []int32 {
+	if x != nil {
+		return x.V
+	}
+	return nil
+}
+
+type I2 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*I1                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *I2) Reset() {
+	*x = I2{}
+	mi := &file_tables_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *I2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*I2) ProtoMessage() {}
+
+func (x *I2) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use I2.ProtoReflect.Descriptor instead.
+func (*I2) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *I2) GetD() []*I1 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type I3 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*I2                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *I3) Reset() {
+	*x = I3{}
+	mi := &file_tables_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *I3) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*I3) ProtoMessage() {}
+
+func (x *I3) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use I3.ProtoReflect.Descriptor instead.
+func (*I3) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *I3) GetD() []*I2 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type I4 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*I3                  `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *I4) Reset() {
+	*x = I4{}
+	mi := &file_tables_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *I4) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*I4) ProtoMessage() {}
+
+func (x *I4) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use I4.ProtoReflect.Descriptor instead.
+func (*I4) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *I4) GetD() []*I3 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+// MLow LSF quantizer codebook (the runtime lsf_cb_dump, encoder). Stored zlib+protobuf.
+type LsfCb struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	St1           []*LsfCbSt1            `protobuf:"bytes,1,rep,name=st1,proto3" json:"st1,omitempty"`                                          // [2]
+	St2           []*LsfCbSt2L1          `protobuf:"bytes,2,rep,name=st2,proto3" json:"st2,omitempty"`                                          // [2][2][17]
+	MinQi         *I4                    `protobuf:"bytes,3,opt,name=min_qi,json=minQi,proto3" json:"min_qi,omitempty"`                         // [2][2][17][16]
+	MaxQi         *I4                    `protobuf:"bytes,4,opt,name=max_qi,json=maxQi,proto3" json:"max_qi,omitempty"`                         // [2][2][17][16]
+	Qstep         *F2                    `protobuf:"bytes,5,opt,name=qstep,proto3" json:"qstep,omitempty"`                                      // [2][2]
+	MeanV         []float32              `protobuf:"fixed32,6,rep,packed,name=mean_v,json=meanV,proto3" json:"mean_v,omitempty"`                // [16]
+	MeanUv        []float32              `protobuf:"fixed32,7,rep,packed,name=mean_uv,json=meanUv,proto3" json:"mean_uv,omitempty"`             // [16]
+	RegCond       []float32              `protobuf:"fixed32,8,rep,packed,name=reg_cond,json=regCond,proto3" json:"reg_cond,omitempty"`          // [2]
+	MinDistV      []float32              `protobuf:"fixed32,9,rep,packed,name=min_dist_v,json=minDistV,proto3" json:"min_dist_v,omitempty"`     // [17]
+	MinDistUv     []float32              `protobuf:"fixed32,10,rep,packed,name=min_dist_uv,json=minDistUv,proto3" json:"min_dist_uv,omitempty"` // [17]
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfCb) Reset() {
+	*x = LsfCb{}
+	mi := &file_tables_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfCb) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfCb) ProtoMessage() {}
+
+func (x *LsfCb) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfCb.ProtoReflect.Descriptor instead.
+func (*LsfCb) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *LsfCb) GetSt1() []*LsfCbSt1 {
+	if x != nil {
+		return x.St1
+	}
+	return nil
+}
+
+func (x *LsfCb) GetSt2() []*LsfCbSt2L1 {
+	if x != nil {
+		return x.St2
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMinQi() *I4 {
+	if x != nil {
+		return x.MinQi
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMaxQi() *I4 {
+	if x != nil {
+		return x.MaxQi
+	}
+	return nil
+}
+
+func (x *LsfCb) GetQstep() *F2 {
+	if x != nil {
+		return x.Qstep
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMeanV() []float32 {
+	if x != nil {
+		return x.MeanV
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMeanUv() []float32 {
+	if x != nil {
+		return x.MeanUv
+	}
+	return nil
+}
+
+func (x *LsfCb) GetRegCond() []float32 {
+	if x != nil {
+		return x.RegCond
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMinDistV() []float32 {
+	if x != nil {
+		return x.MinDistV
+	}
+	return nil
+}
+
+func (x *LsfCb) GetMinDistUv() []float32 {
+	if x != nil {
+		return x.MinDistUv
+	}
+	return nil
+}
+
+type LsfCbSt1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cbhalf        *F2                    `protobuf:"bytes,1,opt,name=cbhalf,proto3" json:"cbhalf,omitempty"`                              // [16][16]
+	CInv          *F2                    `protobuf:"bytes,2,opt,name=c_inv,json=cInv,proto3" json:"c_inv,omitempty"`                      // [16][16]
+	BitsCond      []float32              `protobuf:"fixed32,3,rep,packed,name=bits_cond,json=bitsCond,proto3" json:"bits_cond,omitempty"` // [17]
+	Rotcond       *F3                    `protobuf:"bytes,4,opt,name=rotcond,proto3" json:"rotcond,omitempty"`                            // [2][16][16]
+	CbCinv        *F2                    `protobuf:"bytes,5,opt,name=cb_cinv,json=cbCinv,proto3" json:"cb_cinv,omitempty"`                // [16][16]
+	We            *F3                    `protobuf:"bytes,6,opt,name=we,proto3" json:"we,omitempty"`                                      // [16][16][16]
+	Bits          []float32              `protobuf:"fixed32,7,rep,packed,name=bits,proto3" json:"bits,omitempty"`                         // [16]
+	Wie           *F3                    `protobuf:"bytes,8,opt,name=wie,proto3" json:"wie,omitempty"`                                    // [16][16][16]
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfCbSt1) Reset() {
+	*x = LsfCbSt1{}
+	mi := &file_tables_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfCbSt1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfCbSt1) ProtoMessage() {}
+
+func (x *LsfCbSt1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfCbSt1.ProtoReflect.Descriptor instead.
+func (*LsfCbSt1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *LsfCbSt1) GetCbhalf() *F2 {
+	if x != nil {
+		return x.Cbhalf
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetCInv() *F2 {
+	if x != nil {
+		return x.CInv
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetBitsCond() []float32 {
+	if x != nil {
+		return x.BitsCond
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetRotcond() *F3 {
+	if x != nil {
+		return x.Rotcond
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetCbCinv() *F2 {
+	if x != nil {
+		return x.CbCinv
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetWe() *F3 {
+	if x != nil {
+		return x.We
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetBits() []float32 {
+	if x != nil {
+		return x.Bits
+	}
+	return nil
+}
+
+func (x *LsfCbSt1) GetWie() *F3 {
+	if x != nil {
+		return x.Wie
+	}
+	return nil
+}
+
+type LsfCbSt2L1 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*LsfCbSt2L2          `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfCbSt2L1) Reset() {
+	*x = LsfCbSt2L1{}
+	mi := &file_tables_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfCbSt2L1) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfCbSt2L1) ProtoMessage() {}
+
+func (x *LsfCbSt2L1) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfCbSt2L1.ProtoReflect.Descriptor instead.
+func (*LsfCbSt2L1) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *LsfCbSt2L1) GetD() []*LsfCbSt2L2 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type LsfCbSt2L2 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	D             []*LsfCbSt2            `protobuf:"bytes,1,rep,name=d,proto3" json:"d,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfCbSt2L2) Reset() {
+	*x = LsfCbSt2L2{}
+	mi := &file_tables_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfCbSt2L2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfCbSt2L2) ProtoMessage() {}
+
+func (x *LsfCbSt2L2) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfCbSt2L2.ProtoReflect.Descriptor instead.
+func (*LsfCbSt2L2) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *LsfCbSt2L2) GetD() []*LsfCbSt2 {
+	if x != nil {
+		return x.D
+	}
+	return nil
+}
+
+type LsfCbSt2 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NumQlvls      []int32                `protobuf:"varint,1,rep,packed,name=num_qlvls,json=numQlvls,proto3" json:"num_qlvls,omitempty"` // [16]
+	Qlvls         *F2                    `protobuf:"bytes,2,opt,name=qlvls,proto3" json:"qlvls,omitempty"`                               // [16][n]
+	NumBits       *F2                    `protobuf:"bytes,3,opt,name=num_bits,json=numBits,proto3" json:"num_bits,omitempty"`            // [16][n]
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LsfCbSt2) Reset() {
+	*x = LsfCbSt2{}
+	mi := &file_tables_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LsfCbSt2) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LsfCbSt2) ProtoMessage() {}
+
+func (x *LsfCbSt2) ProtoReflect() protoreflect.Message {
+	mi := &file_tables_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LsfCbSt2.ProtoReflect.Descriptor instead.
+func (*LsfCbSt2) Descriptor() ([]byte, []int) {
+	return file_tables_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *LsfCbSt2) GetNumQlvls() []int32 {
+	if x != nil {
+		return x.NumQlvls
+	}
+	return nil
+}
+
+func (x *LsfCbSt2) GetQlvls() *F2 {
+	if x != nil {
+		return x.Qlvls
+	}
+	return nil
+}
+
+func (x *LsfCbSt2) GetNumBits() *F2 {
+	if x != nil {
+		return x.NumBits
+	}
+	return nil
+}
+
 var File_tables_proto protoreflect.FileDescriptor
 
 var file_tables_proto_rawDesc = string([]byte{
@@ -520,11 +1328,85 @@ var file_tables_proto_rawDesc = string([]byte{
 	0x64, 0x22, 0x35, 0x0a, 0x0b, 0x4c, 0x73, 0x66, 0x53, 0x74, 0x61, 0x67, 0x65, 0x32, 0x53, 0x33,
 	0x12, 0x26, 0x0a, 0x05, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32,
 	0x10, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x43, 0x64,
-	0x66, 0x52, 0x05, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x42, 0x36, 0x5a, 0x34, 0x67, 0x69, 0x74, 0x68,
-	0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x70, 0x75, 0x72, 0x70, 0x73, 0x68, 0x65, 0x6c, 0x6c,
-	0x2f, 0x6d, 0x65, 0x6f, 0x77, 0x63, 0x61, 0x6c, 0x6c, 0x65, 0x72, 0x2f, 0x6d, 0x6c, 0x6f, 0x77,
-	0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e, 0x61, 0x6c, 0x2f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73,
-	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x66, 0x52, 0x05, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x22, 0x12, 0x0a, 0x02, 0x46, 0x31, 0x12, 0x0c,
+	0x0a, 0x01, 0x76, 0x18, 0x01, 0x20, 0x03, 0x28, 0x02, 0x52, 0x01, 0x76, 0x22, 0x23, 0x0a, 0x02,
+	0x46, 0x32, 0x12, 0x1d, 0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x0f, 0x2e,
+	0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x31, 0x52, 0x01,
+	0x64, 0x22, 0x23, 0x0a, 0x02, 0x46, 0x33, 0x12, 0x1d, 0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73,
+	0x2e, 0x46, 0x32, 0x52, 0x01, 0x64, 0x22, 0x23, 0x0a, 0x02, 0x46, 0x34, 0x12, 0x1d, 0x0a, 0x01,
+	0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74,
+	0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x33, 0x52, 0x01, 0x64, 0x22, 0x23, 0x0a, 0x02, 0x46,
+	0x35, 0x12, 0x1d, 0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d,
+	0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x34, 0x52, 0x01, 0x64,
+	0x22, 0x12, 0x0a, 0x02, 0x55, 0x31, 0x12, 0x0c, 0x0a, 0x01, 0x76, 0x18, 0x01, 0x20, 0x03, 0x28,
+	0x0d, 0x52, 0x01, 0x76, 0x22, 0x12, 0x0a, 0x02, 0x49, 0x31, 0x12, 0x0c, 0x0a, 0x01, 0x76, 0x18,
+	0x01, 0x20, 0x03, 0x28, 0x05, 0x52, 0x01, 0x76, 0x22, 0x23, 0x0a, 0x02, 0x49, 0x32, 0x12, 0x1d,
+	0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77,
+	0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x49, 0x31, 0x52, 0x01, 0x64, 0x22, 0x23, 0x0a,
+	0x02, 0x49, 0x33, 0x12, 0x1d, 0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x0f,
+	0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x49, 0x32, 0x52,
+	0x01, 0x64, 0x22, 0x23, 0x0a, 0x02, 0x49, 0x34, 0x12, 0x1d, 0x0a, 0x01, 0x64, 0x18, 0x01, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65,
+	0x73, 0x2e, 0x49, 0x33, 0x52, 0x01, 0x64, 0x22, 0xdb, 0x02, 0x0a, 0x05, 0x4c, 0x73, 0x66, 0x43,
+	0x62, 0x12, 0x27, 0x0a, 0x03, 0x73, 0x74, 0x31, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x15,
+	0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x4c, 0x73, 0x66,
+	0x43, 0x62, 0x53, 0x74, 0x31, 0x52, 0x03, 0x73, 0x74, 0x31, 0x12, 0x29, 0x0a, 0x03, 0x73, 0x74,
+	0x32, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x17, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74,
+	0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32, 0x4c, 0x31,
+	0x52, 0x03, 0x73, 0x74, 0x32, 0x12, 0x26, 0x0a, 0x06, 0x6d, 0x69, 0x6e, 0x5f, 0x71, 0x69, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62,
+	0x6c, 0x65, 0x73, 0x2e, 0x49, 0x34, 0x52, 0x05, 0x6d, 0x69, 0x6e, 0x51, 0x69, 0x12, 0x26, 0x0a,
+	0x06, 0x6d, 0x61, 0x78, 0x5f, 0x71, 0x69, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e,
+	0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x49, 0x34, 0x52, 0x05,
+	0x6d, 0x61, 0x78, 0x51, 0x69, 0x12, 0x25, 0x0a, 0x05, 0x71, 0x73, 0x74, 0x65, 0x70, 0x18, 0x05,
+	0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c,
+	0x65, 0x73, 0x2e, 0x46, 0x32, 0x52, 0x05, 0x71, 0x73, 0x74, 0x65, 0x70, 0x12, 0x15, 0x0a, 0x06,
+	0x6d, 0x65, 0x61, 0x6e, 0x5f, 0x76, 0x18, 0x06, 0x20, 0x03, 0x28, 0x02, 0x52, 0x05, 0x6d, 0x65,
+	0x61, 0x6e, 0x56, 0x12, 0x17, 0x0a, 0x07, 0x6d, 0x65, 0x61, 0x6e, 0x5f, 0x75, 0x76, 0x18, 0x07,
+	0x20, 0x03, 0x28, 0x02, 0x52, 0x06, 0x6d, 0x65, 0x61, 0x6e, 0x55, 0x76, 0x12, 0x19, 0x0a, 0x08,
+	0x72, 0x65, 0x67, 0x5f, 0x63, 0x6f, 0x6e, 0x64, 0x18, 0x08, 0x20, 0x03, 0x28, 0x02, 0x52, 0x07,
+	0x72, 0x65, 0x67, 0x43, 0x6f, 0x6e, 0x64, 0x12, 0x1c, 0x0a, 0x0a, 0x6d, 0x69, 0x6e, 0x5f, 0x64,
+	0x69, 0x73, 0x74, 0x5f, 0x76, 0x18, 0x09, 0x20, 0x03, 0x28, 0x02, 0x52, 0x08, 0x6d, 0x69, 0x6e,
+	0x44, 0x69, 0x73, 0x74, 0x56, 0x12, 0x1e, 0x0a, 0x0b, 0x6d, 0x69, 0x6e, 0x5f, 0x64, 0x69, 0x73,
+	0x74, 0x5f, 0x75, 0x76, 0x18, 0x0a, 0x20, 0x03, 0x28, 0x02, 0x52, 0x09, 0x6d, 0x69, 0x6e, 0x44,
+	0x69, 0x73, 0x74, 0x55, 0x76, 0x22, 0xa3, 0x02, 0x0a, 0x08, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53,
+	0x74, 0x31, 0x12, 0x27, 0x0a, 0x06, 0x63, 0x62, 0x68, 0x61, 0x6c, 0x66, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73,
+	0x2e, 0x46, 0x32, 0x52, 0x06, 0x63, 0x62, 0x68, 0x61, 0x6c, 0x66, 0x12, 0x24, 0x0a, 0x05, 0x63,
+	0x5f, 0x69, 0x6e, 0x76, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f,
+	0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x32, 0x52, 0x04, 0x63, 0x49, 0x6e,
+	0x76, 0x12, 0x1b, 0x0a, 0x09, 0x62, 0x69, 0x74, 0x73, 0x5f, 0x63, 0x6f, 0x6e, 0x64, 0x18, 0x03,
+	0x20, 0x03, 0x28, 0x02, 0x52, 0x08, 0x62, 0x69, 0x74, 0x73, 0x43, 0x6f, 0x6e, 0x64, 0x12, 0x29,
+	0x0a, 0x07, 0x72, 0x6f, 0x74, 0x63, 0x6f, 0x6e, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32,
+	0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x33,
+	0x52, 0x07, 0x72, 0x6f, 0x74, 0x63, 0x6f, 0x6e, 0x64, 0x12, 0x28, 0x0a, 0x07, 0x63, 0x62, 0x5f,
+	0x63, 0x69, 0x6e, 0x76, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f,
+	0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x32, 0x52, 0x06, 0x63, 0x62, 0x43,
+	0x69, 0x6e, 0x76, 0x12, 0x1f, 0x0a, 0x02, 0x77, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32,
+	0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x33,
+	0x52, 0x02, 0x77, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x62, 0x69, 0x74, 0x73, 0x18, 0x07, 0x20, 0x03,
+	0x28, 0x02, 0x52, 0x04, 0x62, 0x69, 0x74, 0x73, 0x12, 0x21, 0x0a, 0x03, 0x77, 0x69, 0x65, 0x18,
+	0x08, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62,
+	0x6c, 0x65, 0x73, 0x2e, 0x46, 0x33, 0x52, 0x03, 0x77, 0x69, 0x65, 0x22, 0x33, 0x0a, 0x0a, 0x4c,
+	0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32, 0x4c, 0x31, 0x12, 0x25, 0x0a, 0x01, 0x64, 0x18, 0x01,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x17, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c,
+	0x65, 0x73, 0x2e, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32, 0x4c, 0x32, 0x52, 0x01, 0x64,
+	0x22, 0x31, 0x0a, 0x0a, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32, 0x4c, 0x32, 0x12, 0x23,
+	0x0a, 0x01, 0x64, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x6d, 0x6c, 0x6f, 0x77,
+	0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32,
+	0x52, 0x01, 0x64, 0x22, 0x7a, 0x0a, 0x08, 0x4c, 0x73, 0x66, 0x43, 0x62, 0x53, 0x74, 0x32, 0x12,
+	0x1b, 0x0a, 0x09, 0x6e, 0x75, 0x6d, 0x5f, 0x71, 0x6c, 0x76, 0x6c, 0x73, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x05, 0x52, 0x08, 0x6e, 0x75, 0x6d, 0x51, 0x6c, 0x76, 0x6c, 0x73, 0x12, 0x25, 0x0a, 0x05,
+	0x71, 0x6c, 0x76, 0x6c, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c,
+	0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x2e, 0x46, 0x32, 0x52, 0x05, 0x71, 0x6c,
+	0x76, 0x6c, 0x73, 0x12, 0x2a, 0x0a, 0x08, 0x6e, 0x75, 0x6d, 0x5f, 0x62, 0x69, 0x74, 0x73, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x6d, 0x6c, 0x6f, 0x77, 0x2e, 0x74, 0x61, 0x62,
+	0x6c, 0x65, 0x73, 0x2e, 0x46, 0x32, 0x52, 0x07, 0x6e, 0x75, 0x6d, 0x42, 0x69, 0x74, 0x73, 0x42,
+	0x36, 0x5a, 0x34, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x70, 0x75,
+	0x72, 0x70, 0x73, 0x68, 0x65, 0x6c, 0x6c, 0x2f, 0x6d, 0x65, 0x6f, 0x77, 0x63, 0x61, 0x6c, 0x6c,
+	0x65, 0x72, 0x2f, 0x6d, 0x6c, 0x6f, 0x77, 0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e, 0x61, 0x6c,
+	0x2f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 })
 
 var (
@@ -539,7 +1421,7 @@ func file_tables_proto_rawDescGZIP() []byte {
 	return file_tables_proto_rawDescData
 }
 
-var file_tables_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_tables_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_tables_proto_goTypes = []any{
 	(*HeapWindow)(nil),    // 0: mlow.tables.HeapWindow
 	(*Region)(nil),        // 1: mlow.tables.Region
@@ -549,20 +1431,57 @@ var file_tables_proto_goTypes = []any{
 	(*LsfStage2S1)(nil),   // 5: mlow.tables.LsfStage2S1
 	(*LsfStage2S2)(nil),   // 6: mlow.tables.LsfStage2S2
 	(*LsfStage2S3)(nil),   // 7: mlow.tables.LsfStage2S3
+	(*F1)(nil),            // 8: mlow.tables.F1
+	(*F2)(nil),            // 9: mlow.tables.F2
+	(*F3)(nil),            // 10: mlow.tables.F3
+	(*F4)(nil),            // 11: mlow.tables.F4
+	(*F5)(nil),            // 12: mlow.tables.F5
+	(*U1)(nil),            // 13: mlow.tables.U1
+	(*I1)(nil),            // 14: mlow.tables.I1
+	(*I2)(nil),            // 15: mlow.tables.I2
+	(*I3)(nil),            // 16: mlow.tables.I3
+	(*I4)(nil),            // 17: mlow.tables.I4
+	(*LsfCb)(nil),         // 18: mlow.tables.LsfCb
+	(*LsfCbSt1)(nil),      // 19: mlow.tables.LsfCbSt1
+	(*LsfCbSt2L1)(nil),    // 20: mlow.tables.LsfCbSt2L1
+	(*LsfCbSt2L2)(nil),    // 21: mlow.tables.LsfCbSt2L2
+	(*LsfCbSt2)(nil),      // 22: mlow.tables.LsfCbSt2
 }
 var file_tables_proto_depIdxs = []int32{
-	1, // 0: mlow.tables.HeapWindow.regions:type_name -> mlow.tables.Region
-	3, // 1: mlow.tables.SmplLsfTables.lsf_sel:type_name -> mlow.tables.Cdf
-	4, // 2: mlow.tables.SmplLsfTables.lsf_grid:type_name -> mlow.tables.LsfGrid
-	5, // 3: mlow.tables.SmplLsfTables.lsf_stage2:type_name -> mlow.tables.LsfStage2S1
-	6, // 4: mlow.tables.LsfStage2S1.config:type_name -> mlow.tables.LsfStage2S2
-	7, // 5: mlow.tables.LsfStage2S2.grid:type_name -> mlow.tables.LsfStage2S3
-	3, // 6: mlow.tables.LsfStage2S3.coeff:type_name -> mlow.tables.Cdf
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	1,  // 0: mlow.tables.HeapWindow.regions:type_name -> mlow.tables.Region
+	3,  // 1: mlow.tables.SmplLsfTables.lsf_sel:type_name -> mlow.tables.Cdf
+	4,  // 2: mlow.tables.SmplLsfTables.lsf_grid:type_name -> mlow.tables.LsfGrid
+	5,  // 3: mlow.tables.SmplLsfTables.lsf_stage2:type_name -> mlow.tables.LsfStage2S1
+	6,  // 4: mlow.tables.LsfStage2S1.config:type_name -> mlow.tables.LsfStage2S2
+	7,  // 5: mlow.tables.LsfStage2S2.grid:type_name -> mlow.tables.LsfStage2S3
+	3,  // 6: mlow.tables.LsfStage2S3.coeff:type_name -> mlow.tables.Cdf
+	8,  // 7: mlow.tables.F2.d:type_name -> mlow.tables.F1
+	9,  // 8: mlow.tables.F3.d:type_name -> mlow.tables.F2
+	10, // 9: mlow.tables.F4.d:type_name -> mlow.tables.F3
+	11, // 10: mlow.tables.F5.d:type_name -> mlow.tables.F4
+	14, // 11: mlow.tables.I2.d:type_name -> mlow.tables.I1
+	15, // 12: mlow.tables.I3.d:type_name -> mlow.tables.I2
+	16, // 13: mlow.tables.I4.d:type_name -> mlow.tables.I3
+	19, // 14: mlow.tables.LsfCb.st1:type_name -> mlow.tables.LsfCbSt1
+	20, // 15: mlow.tables.LsfCb.st2:type_name -> mlow.tables.LsfCbSt2L1
+	17, // 16: mlow.tables.LsfCb.min_qi:type_name -> mlow.tables.I4
+	17, // 17: mlow.tables.LsfCb.max_qi:type_name -> mlow.tables.I4
+	9,  // 18: mlow.tables.LsfCb.qstep:type_name -> mlow.tables.F2
+	9,  // 19: mlow.tables.LsfCbSt1.cbhalf:type_name -> mlow.tables.F2
+	9,  // 20: mlow.tables.LsfCbSt1.c_inv:type_name -> mlow.tables.F2
+	10, // 21: mlow.tables.LsfCbSt1.rotcond:type_name -> mlow.tables.F3
+	9,  // 22: mlow.tables.LsfCbSt1.cb_cinv:type_name -> mlow.tables.F2
+	10, // 23: mlow.tables.LsfCbSt1.we:type_name -> mlow.tables.F3
+	10, // 24: mlow.tables.LsfCbSt1.wie:type_name -> mlow.tables.F3
+	21, // 25: mlow.tables.LsfCbSt2L1.d:type_name -> mlow.tables.LsfCbSt2L2
+	22, // 26: mlow.tables.LsfCbSt2L2.d:type_name -> mlow.tables.LsfCbSt2
+	9,  // 27: mlow.tables.LsfCbSt2.qlvls:type_name -> mlow.tables.F2
+	9,  // 28: mlow.tables.LsfCbSt2.num_bits:type_name -> mlow.tables.F2
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_tables_proto_init() }
@@ -576,7 +1495,7 @@ func file_tables_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tables_proto_rawDesc), len(file_tables_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -54,3 +54,49 @@ message LsfStage2S2 {
 message LsfStage2S3 {
   repeated Cdf coeff = 1;
 }
+
+// Generic nested-float wrappers (protobuf has no nested repeated): F<N> is a
+// depth-N `[[...float]]`. Shared with the reference tables.proto.
+message F1 { repeated float v = 1; }
+message F2 { repeated F1 d = 1; }
+message F3 { repeated F2 d = 1; }
+message F4 { repeated F3 d = 1; }
+message F5 { repeated F4 d = 1; }
+
+// Generic uint32 / int32 nests (index & CMF tables: pitch, lsf_cb).
+message U1 { repeated uint32 v = 1; }
+message I1 { repeated int32 v = 1; }
+message I2 { repeated I1 d = 1; }
+message I3 { repeated I2 d = 1; }
+message I4 { repeated I3 d = 1; }
+
+// MLow LSF quantizer codebook (the runtime lsf_cb_dump, encoder). Stored zlib+protobuf.
+message LsfCb {
+  repeated LsfCbSt1 st1 = 1;     // [2]
+  repeated LsfCbSt2L1 st2 = 2;   // [2][2][17]
+  I4 min_qi = 3;                 // [2][2][17][16]
+  I4 max_qi = 4;                 // [2][2][17][16]
+  F2 qstep = 5;                  // [2][2]
+  repeated float mean_v = 6;     // [16]
+  repeated float mean_uv = 7;    // [16]
+  repeated float reg_cond = 8;   // [2]
+  repeated float min_dist_v = 9;  // [17]
+  repeated float min_dist_uv = 10; // [17]
+}
+message LsfCbSt1 {
+  F2 cbhalf = 1;                 // [16][16]
+  F2 c_inv = 2;                  // [16][16]
+  repeated float bits_cond = 3;  // [17]
+  F3 rotcond = 4;                // [2][16][16]
+  F2 cb_cinv = 5;                // [16][16]
+  F3 we = 6;                     // [16][16][16]
+  repeated float bits = 7;       // [16]
+  F3 wie = 8;                    // [16][16][16]
+}
+message LsfCbSt2L1 { repeated LsfCbSt2L2 d = 1; }
+message LsfCbSt2L2 { repeated LsfCbSt2 d = 1; }
+message LsfCbSt2 {
+  repeated int32 num_qlvls = 1;  // [16]
+  F2 qlvls = 2;                  // [16][n]
+  F2 num_bits = 3;               // [16][n]
+}

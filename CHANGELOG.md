@@ -25,19 +25,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   filename; KAT JSON stays in `testdata/`). No meowcaller code change yet — the
   per-module proto messages/blobs land when each Go module is built.
 
-### mlow/lsf_quant — module #06 scaffold (reference `c697c36`)
-- Scaffolded the encoder-side LSF vector quantizer envelope: `LsfQuantResult`,
-  `LsfCb` (codebook data layout mirroring the reference `LsfCbJson`), and the public
-  signatures `LoadLsfCb` / `LsfWeightsLaroia` / `LsfQuant` / `LsfQuantCond` — all
-  TODO stubs. The quantizer math (the RD beam in `lsf_quant_core`, the per-coeff
-  stage-2 clamps, the cond centroid) is the load-bearing logic and awaits
-  human-directed implementation. `SmplLPCOrder` reused from lpc.go; added
-  `LSFCBCentroids`.
-- **Open asset task:** the codebook `lsf_cb_dump` is postcard in the reference (Go
-  can't read it), so it needs the same protobuf treatment as `smpl_tables` — a new
-  `tables.proto` message, regenerate `lsf_cb_dump.bin` as zlib+protobuf in the
-  reference (push), then embed at the meowcaller package root and decode. Pending
-  go-ahead; required before this module can KAT against `lsf_quant_io.json`.
+### mlow/lsf_quant — module #06 KAT-verified (reference `ed12f35`)
+- Implemented the encoder-side LSF vector quantizer: the VQ_temp Mahalanobis
+  shortlist, the RD beam (`0.5*order*log2(werr)*RDw_adj + bits`) with per-coeff
+  stage-2 clamps and the one-coeff-flip refinement, and the conditional path
+  (`LsfQuantCond` — reg-blended prev NLSF → cond centroid via `rot_apply_wght`).
+  Bit-exact vs the C reference over all `lsf_quant_io.json` vectors
+  (`TestLsfQuant`): `qi[]` exact, `qlsf` within 1e-4. A faithful f32 port — all
+  arithmetic stays `float32`, transcendentals computed in f64 and narrowed (matches
+  the reference closely enough that no `qi` tie flips).
+- `LoadLsfCb` decodes the codebook from `mlow/lsf_cb_dump.bin` (the reference's
+  byte-identical zlib+protobuf blob, embedded at the package root). `internal/tables`
+  regenerated with the shared `F1..F5`/`U1`/`I1..I4` wrappers and the `LsfCb` message.
+- Note: `lsf_quant` is encoder-side; the float-comparison `qi[]` decisions inherit
+  the reference's exactness here, distinct from the known encoder pitch-estimator
+  soft-divergence (module #07/#16).
 
 ### mlow/lsf — module #05 KAT-verified + protobuf LSF table asset (reference `c697c36`)
 - **Reference change (pushed):** `refactor(voip): store the smpl LSF tables as
