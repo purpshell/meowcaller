@@ -7,6 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/lsf_quant — module #06 scaffold (reference `c697c36`)
+- Scaffolded the encoder-side LSF vector quantizer envelope: `LsfQuantResult`,
+  `LsfCb` (codebook data layout mirroring the reference `LsfCbJson`), and the public
+  signatures `LoadLsfCb` / `LsfWeightsLaroia` / `LsfQuant` / `LsfQuantCond` — all
+  TODO stubs. The quantizer math (the RD beam in `lsf_quant_core`, the per-coeff
+  stage-2 clamps, the cond centroid) is the load-bearing logic and awaits
+  human-directed implementation. `SmplLPCOrder` reused from lpc.go; added
+  `LSFCBCentroids`.
+- **Open asset task:** the codebook `lsf_cb_dump` is postcard in the reference (Go
+  can't read it), so it needs the same protobuf treatment as `smpl_tables` — a new
+  `tables.proto` message, regenerate `lsf_cb_dump.bin` as zlib+protobuf in the
+  reference (push), then embed at the meowcaller package root and decode. Pending
+  go-ahead; required before this module can KAT against `lsf_quant_io.json`.
+
 ### mlow/lsf — module #05 KAT-verified + protobuf LSF table asset (reference `c697c36`)
 - **Reference change (pushed):** `refactor(voip): store the smpl LSF tables as
   protobuf` (`c697c36` on `feat/voip-media-stack`). Re-encoded the reference's
