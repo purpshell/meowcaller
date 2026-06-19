@@ -2021,7 +2021,10 @@ static TABLES: OnceLock<PitchTables> = OnceLock::new();
 
 pub(crate) fn load_pitch_tables() -> &'static PitchTables {
     TABLES.get_or_init(|| {
-        super::smpl_tables_blob::load_blob(include_bytes!("testdata/smpl_pitch_tables.bin"))
+        // zlib+protobuf (tables.proto `PitchTables`) so the byte-identical blob loads in Go.
+        let pb: PbPitchTables =
+            super::smpl_tables_blob::load_blob_prost(include_bytes!("testdata/smpl_pitch_tables.bin"));
+        pb_into_pitch(pb)
     })
 }
 
