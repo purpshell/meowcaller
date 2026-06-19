@@ -20,19 +20,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - This unblocks module #07 pitch's decode KAT (the range coder now reaches the pitch
   block).
 
-### mlow/pitch — module #07 scaffold (reference `ed12f35`)
-- Scaffolded the pitch/LTP envelope: decode side (`SmplPitchResult`,
-  `DecodeSmplPitch`) and estimator side (`PitchEstState`+`ResetCond`, `PitchResult`,
-  `PitchTables`, `LoadPitchTables`, `SmplPitch`) — all TODO stubs with
-  `Source of truth:` pins. `NumSubframes`/`MaxLTPBufLen` added; `SmplFLen` reused for
-  the f2 spectrum.
-- **KAT blocked on ordering:** `pitch_vectors.json` verifies the chain
-  LSF(0)→pulses(0)→pitch(0) — the range coder must be advanced past the pulse symbols
-  before the pitch block, so the decode KAT (`TestDecodeSmplPitch`) **skips until
-  module #08 pulse (`decode_smpl_pulses`) exists**. Recommend building #08 before
-  KAT-verifying #07's decode.
-- Estimator side is the known encoder soft-divergence (~0.03 vs C); acceptance
-  tolerance is a human decision, not a byte-exact target.
+### mlow/pitch — module #07 decode KAT-verified (reference `ed12f35`)
+- Implemented the decode side `DecodeSmplPitch` 1:1 from `decode_smpl_pitch`: the LTP
+  gains loop (gain/filter CDFs from `mem.GPitch`+offsets, keyed on p6 and the
+  `prev_*` predictors), the primary lag (absolute vs delta off `st.PrevLag`), the
+  217-entry contour-map search, the optional 64-symbol fine lag, and the fractional
+  per-segment Q6 reconstruction. All `wrapping` address/count arithmetic as plain Go
+  `uint32`/`int32`.
+- KAT `TestDecodeSmplPitch` passes (now unblocked by #08): LSF(0)→pulses(0)→pitch(0)
+  reproduces lag/contour/gain_idx/filt_idx/int_lag_q6 for every `pitch_vectors.json`
+  frame. CodeRabbit review: 0 findings.
+- **Estimator side stays scaffolded** (`SmplPitch`/`LoadPitchTables`/`ResetCond` are
+  still stubs): it's the known encoder soft-divergence (~0.03 vs C) and needs the
+  pitch-tables protobuf asset, the `pitchio_ground_truth.json` vector, and a human
+  tolerance decision before it can be done.
 
 ### reference — all mlow runtime tables migrated to protobuf (reference `ed12f35`)
 - Drove a reference refactor (`refactor(voip): store all mlow runtime tables as

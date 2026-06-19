@@ -17,7 +17,7 @@ Scope: **1:1 calls only.**
 | 04 | lpc | `mlow` | mlow-lpc.md | codec/mlow/decode-pipeline | `mlow/smpl_lpc.rs`, `mlow/smpl_perc.rs` (FFT) | `lsf_quant_io.json`, `fe_dump.json` | implemented |
 | 05 | lsf | `mlow` | mlow-lsf.md | codec/mlow/decode-pipeline | `mlow/smpl_decode.rs` | `lsf_vectors.json` | verified |
 | 06 | lsf_quant | `mlow` | mlow-lsf_quant.md | codec/mlow/decode-pipeline | `mlow/smpl_lsf_quant.rs` | `lsf_quant_io.json` | verified |
-| 07 | pitch | `mlow` | mlow-pitch.md | codec/mlow/decode-pipeline | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | scaffolded |
+| 07 | pitch | `mlow` | mlow-pitch.md | codec/mlow/decode-pipeline | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | verified (decode; estimator scaffolded) |
 | 08 | pulse | `mlow` | mlow-pulse.md | codec/mlow/decode-pipeline | `mlow/smpl_pulse.rs` | `pulse_vectors.json` | verified |
 | 09 | gains | `mlow` | mlow-gains.md | codec/mlow/decode-pipeline | `mlow/smpl_gains.rs` | `gains_vectors.json` | planned |
 | 10 | synth | `mlow` | mlow-synth.md | codec/mlow/decode-pipeline | `mlow/smpl_synth.rs` | (e2e) | planned |
