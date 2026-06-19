@@ -7,14 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### mlow/pulse — module #08 scaffold (reference `ed12f35`)
-- Scaffolded the excitation pulse decode: `SmplPulseResult`, `Mem8Static` (the
-  static 0xe8990 rodata helper, with the verbatim count-byte table), and
-  `DecodeSmplPulses` — TODO stubs with `Source of truth:` pins.
-- KAT `TestDecodeSmplPulses` (pulse_vectors.json) is wired to the real
-  LSF(0)→pulses(0) chain (LSF decode already exists) and **fails until the body
-  lands** — the honest scaffold state, no skip needed. This is the module #07 pitch
-  KAT was waiting on: once pulses decode, the range coder reaches the pitch block.
+### mlow/pulse — module #08 KAT-verified (reference `ed12f35`)
+- Implemented the excitation pulse decode 1:1 from `decode_smpl_pulses`: the
+  triangular pulse-count prior (NB/config-0 path), the recursive subframe split
+  (`smplSplit3537` via `mem.CDFAt` on g_cc-relative bases), the run-length magnitude
+  block, and the batched uniform sign reads — all `wrapping` arithmetic as plain Go
+  `uint32`/`int32`. `Mem8Static` reads the one static rodata table.
+- KAT `TestDecodeSmplPulses` passes: LSF(0)→pulses(0) reproduces the per-subframe
+  counts and full signed pulse vector for every `pulse_vectors.json` frame.
+- CodeRabbit review: one minor finding (divide-by-`p3` zero-guard) resolved with an
+  `// ASSUMPTION:` note (the reference divides unguarded; we stay bit-faithful).
+- This unblocks module #07 pitch's decode KAT (the range coder now reaches the pitch
+  block).
 
 ### mlow/pitch — module #07 scaffold (reference `ed12f35`)
 - Scaffolded the pitch/LTP envelope: decode side (`SmplPitchResult`,
