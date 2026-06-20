@@ -7,14 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### mlow/noise — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
-- Scaffolded the CELP noise-generator core (synth's CELP prerequisite, per directive
-  #5): `NoiseGenerator`+`NewNoiseGenerator`, `SmplGetNormalizedBitrate`,
-  `SmplDecodeResnrg`, and `SmplCelpGenNoise` — TODO stubs with `Source of truth:` pins
-  to smpl_gennoise.rs. KAT `TestGenNoise` skips until the bodies land (enable against
-  `gennoise_vectors.json`). The datasheet's bundled perceptual-weighting front-end and
-  bitrate controller are encoder/analysis concerns — scaffolded with the encoder, not
-  here.
+### mlow/noise — gennoise core KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Implemented the CELP noise-generator core 1:1 from `smpl_gennoise.rs`:
+  `SmplGetNormalizedBitrate`, `SmplDecodeResnrg`, `NewNoiseGenerator`, and
+  `SmplCelpGenNoise` with all its helpers (`smplRand` LCG, `smplGenRandPulses`,
+  `smplGetEnv`/`smplGetEnv0`, the MA1/AR1/ARMA1/MA2 filters, `smplSpecFact2`
+  spectral factorization, the noise DCT + matrix mults, `addNoiseUV`) — voiced and
+  unvoiced paths.
+- KAT `TestGenNoise` passes **bit-exact** against the instrumented-C
+  `gennoise_vectors.json` (copied into testdata) — noise[80], the output generator
+  state (env_last, out_state_uv/v), and the PRNG seed transition, across all three
+  paths (voiced / unvoiced-no-pulses / unvoiced-with-pulses). CodeRabbit: 0 findings.
+- Reused `smplResNrgBias` (synth.go); named the noise matrix mults distinctly to
+  avoid the `matrixMultTransp16` collision with lsf_quant. The datasheet's bundled
+  perc front-end + bitrate controller remain for the encoder module.
 
 ### mlow/postfilter — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Scaffolded the postfilter envelope (synth's CELP prerequisite, per directive #5):
