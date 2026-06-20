@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/noise — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Scaffolded the CELP noise-generator core (synth's CELP prerequisite, per directive
+  #5): `NoiseGenerator`+`NewNoiseGenerator`, `SmplGetNormalizedBitrate`,
+  `SmplDecodeResnrg`, and `SmplCelpGenNoise` — TODO stubs with `Source of truth:` pins
+  to smpl_gennoise.rs. KAT `TestGenNoise` skips until the bodies land (enable against
+  `gennoise_vectors.json`). The datasheet's bundled perceptual-weighting front-end and
+  bitrate controller are encoder/analysis concerns — scaffolded with the encoder, not
+  here.
+
 ### mlow/postfilter — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Scaffolded the postfilter envelope (synth's CELP prerequisite, per directive #5):
   `SmplPostfilterState`+`SmplCombPostfilter` (excitation comb), `HpPostfilterState`+
