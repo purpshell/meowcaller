@@ -40,6 +40,17 @@ step regardless.
    KAT passes. Reverse-engineered names and analysis notes are frequently wrong;
    the vector is the proof. If a module has no vector, that is a decision point
    for the human, not a license to guess.
+5. **Scaffold every prerequisite; implement only the asked module.** When the
+   module you are building references another module that is not built yet (a type
+   it embeds, a function it calls), **scaffold that prerequisite first** — its
+   envelope and stubs, per the Scaffolding standard — so the current module
+   compiles and its cross-module calls resolve against the real surface. Scaffolding
+   a prerequisite is **not** implementing it: leave its bodies as three-line stubs,
+   do not fill them, do not KAT it. Only the module the human asked for gets
+   implemented. This is not a multi-module sprint (directive #2 still holds — you
+   implement exactly one); it just lets a dependent module stand on the real
+   signatures of its dependencies instead of being blocked or faked. Each scaffolded
+   prerequisite is its own `scaffolded` registry entry and commit.
 
 ## The build loop (per module)
 
@@ -149,6 +160,17 @@ Comments earn their place or they do not exist:
   three lines exist only while the body is a stub and are removed when it lands.
 - **`// ASSUMPTION: ...`** — a choice made without full confirmation, stating what
   would invalidate it.
+- **`// NOT VALIDATED: ...`** — a body that **is** implemented (a faithful 1:1 port
+  of the reference) but that **no passing KAT exercises yet** — typically a function
+  gated behind an end-to-end vector whose pipeline is not yet wired. State *which*
+  KAT will cover it (e.g. "validated once the #15 decoder runs `e2e_vectors.json`").
+  This marker is a **debt and a promise**: the function is provisional until proven.
+  It may only be added when the human has **explicitly authorized landing unvalidated
+  bodies** — never on your own initiative (the default remains "green KAT or it is not
+  done"). **The moment a KAT that depends on the function passes, delete the marker**
+  (and confirm the KAT actually covers that function). Treat removing stale
+  `// NOT VALIDATED:` markers as part of every module's VERIFY step: when wiring a KAT,
+  grep the functions it transitively exercises and clear their markers.
 - **A short context note** — only when a future reader would otherwise lose
   non-obvious context (a magic constant's origin, a byte-order quirk, a deviation
   from the reference and why).
@@ -222,7 +244,10 @@ before proceeding. None of this lives in code comments.
 
 - No autonomous multi-module runs.
 - No filling a function body with a guess to avoid stopping.
-- No "it compiles, ship it" — green KAT or it is not done.
+- No "it compiles, ship it" — green KAT or it is not done. The **only** exception is
+  a body the human has explicitly authorized landing ahead of its vector, which must
+  carry a `// NOT VALIDATED:` marker (see Comment policy) and be proven the moment its
+  KAT exists.
 - No silently copying logic whose meaning you cannot explain.
 - No importing or copying the reference library — the Go stays an independent
   implementation. Naming it is now expected: every function carries a
