@@ -7,20 +7,24 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### mlow/synth — module #10 scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
-- Scaffolded the low-band synthesis envelope: `SmplSynthTables`/`LoadSmplSynthTables`,
-  `SmplReconstructNLSF`, `SmplNLSF2A`, `SmplGainLin`, `SmplLTPFracGain`, the synth
-  state types (`SmplExcGainState`, `SmplPitchSynth`, `SmplFrameSynth`+`New…`),
-  `SmplLTPSubframePred`, `SynthInternalFrame`, the C-float CELP path
-  (`CelpDecParams`, `CelpDecState`+`New…`+`SynthFrame`), and `QuantNrgRes4` — all
-  TODO stubs with `Source of truth:` pins (spanning smpl_synth.rs / smpl_celpdec.rs /
-  smpl_nrgres.rs). Consts `SmplOrder`/`SmplSubfrLen`/`SmplIntfLen`/`SmplSubfrCount`/
-  `SmplLtpHist` added.
-- `SmplDecoderState` is intentionally **omitted** — its `Harm` field is a
-  `HarmPostfilterState` from module #11 postfilter (not built); it lands when #11
-  exists (or at #15 decoder integration).
-- KAT `TestSynth` skips: synth has no standalone unit vector — it's validated
-  end-to-end (`e2e_vectors.json`) by module #15 decoder.
+### mlow/synth — module #10 scaffold + NLSF reconstruction verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Scaffolded the full low-band synthesis envelope (TODO stubs with `Source of truth:`
+  pins spanning smpl_synth.rs / smpl_celpdec.rs / smpl_nrgres.rs): `SmplNLSF2A`,
+  `SmplGainLin`, `SmplLTPFracGain`, `SmplExcGainState`, `SmplPitchSynth`,
+  `SmplFrameSynth`+`New…`, `SmplLTPSubframePred`, `SynthInternalFrame`, the C-float
+  CELP path (`CelpDecParams`, `CelpDecState`+`New…`+`SynthFrame`), and `QuantNrgRes4`.
+- **Implemented + verified `LoadSmplSynthTables` and `SmplReconstructNLSF`** (with the
+  helpers `smplNLSFLaroiaWeights`/`smplNLSFDecorr`/`smplStabilizeNLSF`). The loader
+  decodes the embedded `mlow/smpl_synth_tables.bin` (zlib+protobuf, `internal/tables`
+  regenerated with the `SmplSynthTables` message + `f4ToGo`/`f5ToGo` helpers). KAT
+  `TestSmplReconstructNLSF` quantizes each `lsf_quant_io.json` record and requires the
+  reconstruction to match the captured `qlsf` (≤1e-3; rec 3 excluded as in the
+  reference). CodeRabbit: 0 findings.
+- The frame-synthesis bodies (`SynthInternalFrame`, `SynthFrame`, etc.) remain stubs:
+  no standalone vector — validated end-to-end (`e2e_vectors.json`) by module #15
+  decoder; `TestSynth` skips with that reason.
+- `SmplDecoderState` intentionally **omitted** — its `Harm` field is a
+  `HarmPostfilterState` from module #11 (not built); lands at #11 / #15 integration.
 
 ### mlow/gains — module #09 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented `DecodeSmplGains` 1:1 from `decode_smpl_gains`: main+delta gain CDFs,

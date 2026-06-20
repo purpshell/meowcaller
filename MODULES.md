@@ -20,7 +20,7 @@ Scope: **1:1 calls only.**
 | 07 | pitch | `mlow` | mlow-pitch.md | codec/mlow/decode-pipeline | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | verified (decode; estimator scaffolded) |
 | 08 | pulse | `mlow` | mlow-pulse.md | codec/mlow/decode-pipeline | `mlow/smpl_pulse.rs` | `pulse_vectors.json` | verified |
 | 09 | gains | `mlow` | mlow-gains.md | codec/mlow/decode-pipeline | `mlow/smpl_gains.rs` | `gains_vectors.json` | verified |
-| 10 | synth | `mlow` | mlow-synth.md | codec/mlow/decode-pipeline | `mlow/smpl_synth.rs` | (e2e) | scaffolded |
+| 10 | synth | `mlow` | mlow-synth.md | codec/mlow/decode-pipeline | `mlow/smpl_synth.rs` | (e2e) | partial (reconstruct-nlsf verified; frame-synth e2e-gated) |
 | 11 | postfilter | `mlow` | mlow-postfilter.md | codec/mlow/decode-pipeline | `mlow/smpl_*postfilter.rs`, `smpl_harmcomb.rs` | (e2e) | planned |
 | 12 | vad | `mlow` | mlow-vad.md | codec/mlow | `mlow/smpl_vad.rs` | `vad_ground_truth.json` | planned |
 | 13 | noise | `mlow` | mlow-noise.md | codec/mlow | `mlow/smpl_gennoise.rs` | `gennoise_vectors.json` | planned |

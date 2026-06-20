@@ -1,5 +1,18 @@
 package mlow
 
+import (
+	"bytes"
+	"compress/zlib"
+	_ "embed"
+	"io"
+	"math"
+	"sync"
+
+	"google.golang.org/protobuf/proto"
+
+	"github.com/purpshell/meowcaller/mlow/internal/tables"
+)
+
 // Low-band synthesis: NLSF reconstruction, NLSF→LPC, gain linearization, LTP/ACB
 // excitation prediction, and the per-internal-frame synthesis that turns decoded
 // parameters into PCM. Validated end-to-end via the decoder (module #15).
@@ -11,6 +24,21 @@ const (
 	SmplSubfrCount = 4
 	SmplLtpHist    = 728
 )
+
+const (
+	smplPiF32            = float32(3.1415927410125)
+	smplNLSFWeightWMax   = float32(999.9999)
+	smplNLSFWeightEps    = float32(0.0009999999)
+	smplStabilizeMaxLoop = 1000
+	smplStabilizeEps     = float32(9.5367431640625e-07)
+)
+
+// smplSynthTablesBlob is the runtime synthesis tables as a zlib-compressed
+// SmplSynthTables protobuf — the reference's byte-identical smpl_synth_tables.bin,
+// embedded at the package root (production asset, reference filename).
+//
+//go:embed smpl_synth_tables.bin
+var smplSynthTablesBlob []byte
 
 // --- NLSF reconstruction / synthesis tables ---
 
@@ -25,28 +53,203 @@ type SmplSynthTables struct {
 	Grid16Matrices [][][]float32 // [sig][config][256]
 }
 
+var (
+	smplSynthOnce   sync.Once
+	smplSynthTables *SmplSynthTables
+)
+
 // LoadSmplSynthTables decodes the embedded synthesis tables once and returns the shared set.
 func LoadSmplSynthTables() *SmplSynthTables {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L97-L104
-	// TODO
-	// agent suggestion: same protobuf-asset path as LoadSmplTables/LoadLsfCb — embed
-	//   the reference's smpl_synth_tables.bin (zlib+protobuf tables.proto
-	//   SmplSynthTables) at the package root, inflate + proto.Unmarshal via
-	//   internal/tables, memoized with sync.Once.
-	// human input:
-	panic("mlow: LoadSmplSynthTables not yet implemented (scaffold)")
+	smplSynthOnce.Do(func() {
+		zr, err := zlib.NewReader(bytes.NewReader(smplSynthTablesBlob))
+		if err != nil {
+			panic("mlow: open synth table blob: " + err.Error())
+		}
+		raw, err := io.ReadAll(zr)
+		if err != nil {
+			panic("mlow: inflate synth table blob: " + err.Error())
+		}
+		_ = zr.Close()
+		var pb tables.SmplSynthTables
+		if err := proto.Unmarshal(raw, &pb); err != nil {
+			panic("mlow: decode synth table blob: " + err.Error())
+		}
+		smplSynthTables = &SmplSynthTables{
+			Valtables:      f5ToGo(pb.GetValtables()),
+			Centroids:      f3ToGo(pb.GetCentroids()),
+			Matrices:       f4ToGo(pb.GetMatrices()),
+			MinSpacing:     f2ToGo(pb.GetMinSpacing()),
+			Grid16W:        f2ToGo(pb.GetGrid16W()),
+			Grid16Alpha:    pb.GetGrid16Alpha(),
+			Grid16Matrices: f3ToGo(pb.GetGrid16Matrices()),
+		}
+	})
+	return smplSynthTables
+}
+
+func f4ToGo(m *tables.F4) [][][][]float32 {
+	d := m.GetD()
+	out := make([][][][]float32, len(d))
+	for i, r := range d {
+		out[i] = f3ToGo(r)
+	}
+	return out
+}
+
+func f5ToGo(m *tables.F5) [][][][][]float32 {
+	d := m.GetD()
+	out := make([][][][][]float32, len(d))
+	for i, r := range d {
+		out[i] = f4ToGo(r)
+	}
+	return out
+}
+
+// smplNLSFLaroiaWeights: inverse-gap weights w[k] = invgap[k] + invgap[k+1] (silk_NLSF_VQ_weights_laroia).
+func smplNLSFLaroiaWeights(nlsf, out []float32) {
+	var inv [SmplOrder + 1]float32
+	clamp := func(gap float32) float32 {
+		if gap > smplNLSFWeightEps {
+			return 1.0 / gap
+		}
+		return smplNLSFWeightWMax
+	}
+	inv[0] = clamp(nlsf[0])
+	prev := nlsf[0]
+	for k := 1; k < SmplOrder; k++ {
+		inv[k] = clamp(nlsf[k] - prev)
+		prev = nlsf[k]
+	}
+	inv[SmplOrder] = clamp(smplPiF32 - nlsf[SmplOrder-1])
+	for k := 0; k < SmplOrder; k++ {
+		out[k] = inv[k] + inv[k+1]
+	}
+}
+
+// smplNLSFDecorr: out[r] = sum_c mat[c*16 + r] * vec[c] (column-major decorrelation matrix).
+func smplNLSFDecorr(mat, vec, out []float32) {
+	var scr [SmplOrder]float32
+	v0 := vec[0]
+	for r := 0; r < SmplOrder; r++ {
+		scr[r] = v0 * mat[r]
+	}
+	for c := 1; c < SmplOrder; c++ {
+		v := vec[c]
+		base := c * SmplOrder
+		for r := 0; r < SmplOrder; r++ {
+			scr[r] += mat[base+r] * v
+		}
+	}
+	copy(out[:SmplOrder], scr[:])
+}
+
+// smplStabilizeNLSF enforces minimum spacing + ordering in the margin domain (silk_NLSF_stabilize).
+func smplStabilizeNLSF(nlsf, minSpacing []float32) {
+	const L = SmplOrder
+	var marg [L + 1]float32
+	marg[0] = nlsf[0] - minSpacing[0]
+	for i := 1; i < L; i++ {
+		marg[i] = nlsf[i] - nlsf[i-1] - minSpacing[i]
+	}
+	marg[L] = smplPiF32 - nlsf[L-1] - minSpacing[L]
+	argmin := func() (float32, int) {
+		m := marg[0]
+		idx := 0
+		for i := 1; i < L+1; i++ {
+			if marg[i] < m {
+				m = marg[i]
+				idx = i
+			}
+		}
+		return m, idx
+	}
+	min, sel := argmin()
+	loopN := 0
+	for min < 0.0 {
+		d := float32(loopN)*smplStabilizeEps - min
+		if sel == 0 {
+			marg[0] += d
+			marg[1] -= d
+		} else if sel == L {
+			marg[L] += d
+			marg[L-1] -= d
+		} else {
+			marg[sel] += d
+			half := d * 0.5
+			marg[sel-1] -= half
+			marg[sel+1] -= half
+		}
+		m, s := argmin()
+		min = m
+		sel = s
+		if min < 0.0 {
+			loopN++
+			if loopN == smplStabilizeMaxLoop {
+				break
+			}
+		}
+	}
+	nlsf[0] = minSpacing[0] + marg[0]
+	run := nlsf[0]
+	for i := 1; i < L; i++ {
+		run = run + marg[i] + minSpacing[i]
+		nlsf[i] = run
+	}
 }
 
 // SmplReconstructNLSF rebuilds the quantized NLSF from the stage indices and the
 // previous frame's NLSF (the envelope the decoder synthesizes from).
 func SmplReconstructNLSF(t *SmplSynthTables, stage1, config, grid int, stage2 *[16]int32, prevNLSF []float32) []float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_synth.rs#L176-L234
-	// TODO
-	// agent suggestion: port smpl_reconstruct_nlsf — centroid + decorrelation-matrix
-	//   reconstruction (grid==16 inverted by signal type), then the min-spacing
-	//   stabilize loop; f64 accumulation truncated to f32 per the datasheet.
-	// human input:
-	panic("mlow: SmplReconstructNLSF not yet implemented (scaffold)")
+	val := t.Valtables[stage1][config][grid]
+	var resid [SmplOrder]float32
+	for k := 0; k < SmplOrder; k++ {
+		sym := stage2[k]
+		if sym >= 0 && int(sym) < len(val[k]) {
+			resid[k] = val[k][sym]
+		}
+	}
+
+	out := make([]float32, SmplOrder)
+	if grid == 16 {
+		// grid==16: interpolate base between prevNLSF and the inverted grid16 base table.
+		var base [SmplOrder]float32
+		baseTbl := t.Grid16W[1-stage1]
+		alpha := t.Grid16Alpha[stage1]
+		for k := 0; k < SmplOrder; k++ {
+			var pv float32
+			if k < len(prevNLSF) {
+				pv = prevNLSF[k]
+			}
+			base[k] = pv + alpha*(baseTbl[k]-pv)
+		}
+		var w [SmplOrder]float32
+		smplNLSFLaroiaWeights(base[:], w[:])
+		for i := range w {
+			w[i] = float32(math.Sqrt(float64(w[i])))
+		}
+		var decorr [SmplOrder]float32
+		smplNLSFDecorr(t.Grid16Matrices[stage1][config], resid[:], decorr[:])
+		for k := 0; k < SmplOrder; k++ {
+			out[k] = base[k] + decorr[k]/w[k]
+		}
+		smplStabilizeNLSF(out, t.MinSpacing[stage1])
+		return out
+	}
+
+	// matrix case (grid < 16): NLSF[r] = 2*centroid[r] + sum_c mat[c][r]*resid[c].
+	cent := t.Centroids[stage1][grid]
+	mat := t.Matrices[stage1][grid]
+	for r := 0; r < SmplOrder; r++ {
+		acc := 2.0 * cent[r]
+		for c := 0; c < SmplOrder; c++ {
+			acc += mat[c][r] * resid[c]
+		}
+		out[r] = acc
+	}
+	smplStabilizeNLSF(out, t.MinSpacing[stage1])
+	return out
 }
 
 // SmplNLSF2A converts NLSF to the monic LPC coefficient vector A[0..16].

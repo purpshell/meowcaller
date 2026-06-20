@@ -70,6 +70,17 @@ message I2 { repeated I1 d = 1; }
 message I3 { repeated I2 d = 1; }
 message I4 { repeated I3 d = 1; }
 
+// MLow synthesis tables (the runtime smpl_synth_tables dump). Stored zlib+protobuf.
+message SmplSynthTables {
+  F5 valtables = 1;        // [stage1][config][grid][coeff] -> residual values
+  F3 centroids = 2;        // [stage1][grid] -> 16 base NLSF
+  F4 matrices = 3;         // [stage1][grid] -> 16x16 decorrelation matrix
+  F2 min_spacing = 4;      // [stage1] -> 17 stabilize spacings
+  F2 grid16_w = 5;
+  repeated float grid16_alpha = 6;
+  F3 grid16_matrices = 7;  // [sig][config] -> 256-entry flat matrix
+}
+
 // MLow LSF quantizer codebook (the runtime lsf_cb_dump, encoder). Stored zlib+protobuf.
 message LsfCb {
   repeated LsfCbSt1 st1 = 1;     // [2]
