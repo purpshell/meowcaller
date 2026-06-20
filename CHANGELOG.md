@@ -7,6 +7,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/synth — module #10 scaffold (reference `ed12f35`)
+- Scaffolded the low-band synthesis envelope: `SmplSynthTables`/`LoadSmplSynthTables`,
+  `SmplReconstructNLSF`, `SmplNLSF2A`, `SmplGainLin`, `SmplLTPFracGain`, the synth
+  state types (`SmplExcGainState`, `SmplPitchSynth`, `SmplFrameSynth`+`New…`),
+  `SmplLTPSubframePred`, `SynthInternalFrame`, the C-float CELP path
+  (`CelpDecParams`, `CelpDecState`+`New…`+`SynthFrame`), and `QuantNrgRes4` — all
+  TODO stubs with `Source of truth:` pins (spanning smpl_synth.rs / smpl_celpdec.rs /
+  smpl_nrgres.rs). Consts `SmplOrder`/`SmplSubfrLen`/`SmplIntfLen`/`SmplSubfrCount`/
+  `SmplLtpHist` added.
+- `SmplDecoderState` is intentionally **omitted** — its `Harm` field is a
+  `HarmPostfilterState` from module #11 postfilter (not built); it lands when #11
+  exists (or at #15 decoder integration).
+- KAT `TestSynth` skips: synth has no standalone unit vector — it's validated
+  end-to-end (`e2e_vectors.json`) by module #15 decoder.
+
 ### mlow/gains — module #09 KAT-verified (reference `ed12f35`)
 - Implemented `DecodeSmplGains` 1:1 from `decode_smpl_gains`: main+delta gain CDFs,
   the gain reconstruction (deliberate adjacent-rodata read via the heap window), and
