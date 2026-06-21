@@ -13,14 +13,15 @@ the per-packet IV, and AES-128-CTR encrypts/decrypts the RTP payload.
 `inputs.payload`, and the expected `e2e_srtp.*` fields). Copy it verbatim into
 `srtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 
 ```rust
-//! E2E 1:1 SRTP — the primary working path. Keys derive from `callKey` (32B) +
+//! E2E 1:1 SRTP, the primary working path. Keys derive from `callKey` (32B) +
 //! participant LID via HKDF-SHA256, then an AES-CM PRF; payloads use AES-128-CTR
 //! with a 4-byte WARP MESSAGE-INTEGRITY tag (HMAC-SHA1, not verified on recv).
-//! Ported from zapo-caller `src/media/e2e-srtp.ts`.
 
 use aes::Aes128;
 use ctr::Ctr128BE;
@@ -71,12 +72,16 @@ fn derive_session_keys_from_master(master: &[u8]) -> E2eSrtpKeys {
 /// E2E 1:1 keys from `call_key` (>= 32B) and a participant LID (HKDF `info`).
 /// The `info` is the *sender's* own participant id, so a caller derives the send keys from the
 /// self LID and the recv keys from the peer LID (note SFrame uses the opposite convention).
-pub fn derive_e2e_keys(call_key: &[u8], participant_lid: &str) -> E2eSrtpKeys {
+/// Returns `None` when `call_key` is shorter than 32 bytes (a malformed peer callKey).
+pub fn derive_e2e_keys(call_key: &[u8], participant_lid: &str) -> Option<E2eSrtpKeys> {
+    if call_key.len() < 32 {
+        return None;
+    }
     let master = hkdf_sha256(&[0u8; 32], &call_key[..32], participant_lid.as_bytes(), 46);
-    derive_session_keys_from_master(&master)
+    Some(derive_session_keys_from_master(&master))
 }
 
-/// E2E 1:1 keys from `<raw_e2e>` (keygen v2) — replaces callKey as the HKDF IKM.
+/// E2E 1:1 keys from `<raw_e2e>` (keygen v2): replaces callKey as the HKDF IKM.
 pub fn derive_e2e_keys_from_raw(raw_e2e: &[u8], participant_lid: &str) -> Option<E2eSrtpKeys> {
     if raw_e2e.len() < 32 {
         return None;
@@ -131,12 +136,56 @@ impl RocTracker {
             self.initialized = true;
             return self.roc;
         }
-        // Wrap detection mirrors the TS `((seq - last) | 0) < -32768`.
+        // A signed 16-bit gap below -32768 is the wrap (seq jumped backward past the half-range).
         if (seq as i32 - self.last_seq as i32) < -32768 {
             self.roc = self.roc.wrapping_add(1);
         }
         self.last_seq = seq;
         self.roc
+    }
+}
+
+/// Recv-side ROC estimator (RFC 3711 §3.3.1 guess-index). Unlike the monotonic send tracker it
+/// tolerates reorder/loss: each packet's ROC is guessed from the highest seq seen, so a late
+/// packet straddling a wrap decrypts under the right (lower) ROC without poisoning the state.
+#[derive(Default)]
+pub struct RecvRocTracker {
+    roc: u32,
+    s_l: u16,
+    initialized: bool,
+}
+
+impl RecvRocTracker {
+    /// Guess the ROC for `seq` and fold it into the state. Seeds from the first packet (roc=0).
+    pub fn guess_roc(&mut self, seq: u16) -> u32 {
+        if !self.initialized {
+            self.s_l = seq;
+            self.initialized = true;
+            return self.roc;
+        }
+        // Pick v in {roc-1, roc, roc+1} so 2^16*v+seq is closest to 2^16*roc+s_l. The signed 16-bit
+        // gap (not a modular wrapping_sub) is what distinguishes "next-but-reordered" from "wrapped".
+        let v = if self.s_l < 0x8000 {
+            if (seq as i32 - self.s_l as i32) > 0x8000 {
+                self.roc.wrapping_sub(1) // old packet from before the origin (roc-1)
+            } else {
+                self.roc
+            }
+        } else if (self.s_l as i32 - seq as i32) > 0x8000 {
+            self.roc.wrapping_add(1) // forward wrap into roc+1
+        } else {
+            self.roc
+        };
+        if v == self.roc {
+            if seq > self.s_l {
+                self.s_l = seq;
+            }
+        } else if v == self.roc.wrapping_add(1) {
+            self.roc = v;
+            self.s_l = seq;
+        }
+        // v == roc-1 (reordered late packet): return the lower ROC, leave state untouched.
+        v
     }
 }
 
@@ -164,13 +213,14 @@ mod tests {
     fn derive_e2e_keys_matches_kat() {
         let k = kats();
         let call_key = hexd(&k, &["inputs", "callKey"]);
-        let peer = derive_e2e_keys(&call_key, k["inputs"]["peerLid"].as_str().unwrap());
+        let peer = derive_e2e_keys(&call_key, k["inputs"]["peerLid"].as_str().unwrap()).unwrap();
         let expect = keys_from(&k, "peer");
         assert_eq!(peer.cipher_key, expect.cipher_key, "peer cipher_key");
         assert_eq!(peer.salt, expect.salt, "peer salt");
         assert_eq!(peer.auth_key, expect.auth_key, "peer auth_key");
 
-        let self_keys = derive_e2e_keys(&call_key, k["inputs"]["selfLid"].as_str().unwrap());
+        let self_keys =
+            derive_e2e_keys(&call_key, k["inputs"]["selfLid"].as_str().unwrap()).unwrap();
         let expect_self = keys_from(&k, "self");
         assert_eq!(
             self_keys.cipher_key, expect_self.cipher_key,
@@ -188,6 +238,55 @@ mod tests {
         let roc = k["inputs"]["roc"].as_u64().unwrap() as u32;
         let iv = build_e2e_rtp_iv(&peer.salt, ssrc, roc, seq);
         assert_eq!(hex::encode(iv), k["e2e_srtp"]["rtpIv"].as_str().unwrap());
+    }
+
+    #[test]
+    fn roc_tracker_wraps() {
+        // --- send-side monotonic tracker ---
+        let mut tx = RocTracker::default();
+        assert_eq!(tx.advance(0xFFFE), 0); // seed
+        assert_eq!(tx.advance(0xFFFF), 0);
+        assert_eq!(tx.advance(0x0000), 1, "0xFFFF→0x0000 bumps ROC");
+        assert_eq!(tx.advance(0x0001), 1);
+        // Small out-of-order dip must NOT bump.
+        assert_eq!(tx.advance(0x0000), 1, "a backward dip does not bump ROC");
+        assert_eq!(tx.advance(0x0001), 1);
+        // Walk to a second wrap → ROC=2.
+        for s in [0x7000u16, 0xE000, 0xFFFF] {
+            tx.advance(s);
+        }
+        assert_eq!(tx.advance(0x0000), 2, "second wrap gives ROC=2");
+
+        // --- recv-side guess tracker ---
+        let mut rx = RecvRocTracker::default();
+        assert_eq!(rx.guess_roc(0xFFFE), 0); // seed (roc=0, s_l=0xFFFE)
+        assert_eq!(rx.guess_roc(0xFFFF), 0);
+        assert_eq!(rx.guess_roc(0x0000), 1, "0xFFFF→0x0000 bumps ROC");
+        assert_eq!(rx.guess_roc(0x0001), 1);
+        // Reordered small dip in the same ROC must NOT bump, and must not corrupt s_l.
+        assert_eq!(
+            rx.guess_roc(0x0000),
+            1,
+            "a reordered dip stays in the same ROC"
+        );
+        assert_eq!(rx.guess_roc(0x0002), 1, "state intact after the dip");
+        // Walk forward (< 2^15 steps) to the high range, then wrap again → ROC=2.
+        for s in [0x7000u16, 0xE000, 0xFFFF] {
+            assert_eq!(rx.guess_roc(s), 1);
+        }
+        assert_eq!(rx.guess_roc(0x0000), 2, "second wrap gives ROC=2");
+        // A late packet from just before the last wrap returns the LOWER ROC without corrupting
+        // state: the next in-order packet still guesses ROC=2.
+        assert_eq!(
+            rx.guess_roc(0xFFF0),
+            1,
+            "reordered late packet returns the lower ROC"
+        );
+        assert_eq!(
+            rx.guess_roc(0x0001),
+            2,
+            "state not corrupted by the late packet"
+        );
     }
 
     #[test]

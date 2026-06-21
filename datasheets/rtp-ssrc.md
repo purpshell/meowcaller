@@ -9,11 +9,12 @@ participant-LID formatting helpers used as HKDF `info`. Keying layer.
 participant-id format assertions. Copy that fixture JSON verbatim into
 `rtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 ```rust
 //! SSRC derivation and participant-LID helpers for E2E HKDF `info`.
-//! Ported from zapo-caller `src/media/voip-crypto.ts`.
 
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -21,7 +22,7 @@ use sha2::Sha256;
 /// Slot words for the 9-stream relay allocate plan (node-load / WASM).
 pub const WASM_RELAY_STREAM_SLOT_WORDS: [u32; 9] = [0, 1, 4, 2, 3, 5, 7, 8, 6];
 
-/// Participant / stream SSRC — HKDF-SHA256(salt=slot_word LE32, ikm=call_id, info=lid, 4),
+/// Participant / stream SSRC: HKDF-SHA256(salt=slot_word LE32, ikm=call_id, info=lid, 4),
 /// read back as a little-endian u32.
 pub fn derive_wasm_participant_ssrc(call_id: &str, lid: &str, slot_word: u32) -> u32 {
     let hk = Hkdf::<Sha256>::new(Some(&slot_word.to_le_bytes()), call_id.as_bytes());
@@ -37,24 +38,11 @@ pub fn derive_wasm_relay_stream_ssrcs(call_id: &str, lid: &str) -> [u32; 9] {
 }
 
 /// Device-qualified LID for E2E SRTP HKDF `info`: keep an existing `:N@lid`,
-/// bare `@lid` becomes `:0@lid`, everything else passes through.
+/// bare `@lid` becomes `:0@lid`, everything else passes through. Intentionally a separate protocol
+/// surface from SFrame's variant; they coincide today, so both delegate to one helper. Un-shim here
+/// if E2E-SRTP ever needs to diverge.
 pub fn format_e2e_srtp_participant_id(jid: &str) -> String {
-    let bare = jid.split('/').next().unwrap_or(jid).trim();
-    let Some(at) = bare.rfind('@') else {
-        return bare.to_string();
-    };
-    if at == 0 {
-        return bare.to_string();
-    }
-    let user = &bare[..at];
-    let domain = &bare[at + 1..];
-    if user.contains(':') {
-        return bare.to_string();
-    }
-    if domain == "lid" {
-        return format!("{user}:0@{domain}");
-    }
-    bare.to_string()
+    crate::voip::format_participant_id(jid)
 }
 
 /// Device-qualified LID variants the recv path tries as HKDF `info` (peer sender LIDs).

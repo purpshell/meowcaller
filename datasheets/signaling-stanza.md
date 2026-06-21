@@ -9,14 +9,16 @@ control stanzas. Signaling layer.
 destination, accept/preaccept shape, transport net/protocol rule, relaylatency
 latency encoding, heartbeat addressing, terminate targets).
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 ```rust
 //! Outbound call signaling builders (offer/accept/preaccept/transport/relaylatency/
-//! heartbeat/terminate/mute/reject) as free `Node` builders. Ported from zapo-caller
-//! `src/signaling.ts`. The `<offer>` child order is load-bearing (server returns 439 if wrong).
+//! heartbeat/terminate/mute/reject) as free `Node` builders. The `<offer>` child order
+//! is load-bearing (server returns 439 if wrong).
 //!
-//! Stanza ids that the TS generates with random bytes (heartbeat, preaccept) are passed in
+//! Stanza ids generated from random bytes (heartbeat, preaccept) are passed in
 //! so the builders stay pure; the I/O layer supplies them.
 
 use wacore_binary::builder::NodeBuilder;

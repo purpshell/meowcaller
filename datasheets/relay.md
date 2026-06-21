@@ -11,6 +11,11 @@ in the `tests` module below. The connection path (`connect_relay_media`) talks t
 live relay and has no recorded vector. If a classifier vector file is later
 extracted, copy it verbatim into `relay/testdata/`.
 
+**Reference pinned at:** _UNMAPPED — the embedded `transport.rs` (UDP/DTLS/SCTP/webrtc-rs
+media transport) is **not present** in whatsapp-rust @ `41095d4e6ba4610e054e9ede3af1d5e88a83faee`;
+the only relay source there is `relay_parse.rs` (the `<relay>` ack-block parser, a
+different layer). This datasheet needs human re-sourcing before module #26 is built._
+
 ## Reference source (verbatim — authoritative)
 
 ```rust

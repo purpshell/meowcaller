@@ -12,12 +12,13 @@ appended to protected packets.
 `inputs.samplePacket`, `inputs.roc`, and the expected `e2e_srtp.warp_mi_tag4`).
 Copy it verbatim into `srtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 
 ```rust
 //! WARP RTP extension constants and the WARP MESSAGE-INTEGRITY tag.
-//! Ported from zapo-caller `src/media/warp.ts`.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;

@@ -13,16 +13,17 @@ AES-ICM.
 `inputs.ssrc`, `inputs.seq`, `inputs.roc`, `inputs.payload`, and the expected
 `hbh_srtp.*` fields). Copy it verbatim into `srtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 
 ```rust
-//! HBH (hop-by-hop) SRTP — legacy/fallback path keyed from the signaling `hbh_key`
-//! (30B) via `wa_sfu_kdf`, then the libsrtp AES-ICM session-key expansion.
-//! Ported from zapo-caller `src/media/srtp.ts`.
+//! HBH (hop-by-hop) SRTP: legacy/fallback path keyed from the signaling `hbh_key`
+//! (30B) via HKDF-SHA256 (label as `info`), then the libsrtp AES-ICM session-key expansion.
 //!
 //! The counter here is libsrtp's AES-ICM with a 2-byte carry (bytes 15 then 14),
-//! NOT a full 128-bit CTR — it only diverges past ~1 MiB/packet (impossible for
+//! NOT a full 128-bit CTR; it only diverges past ~1 MiB/packet (impossible for
 //! audio), but is reproduced faithfully so vectors match.
 
 use aes::Aes128;
@@ -51,11 +52,6 @@ pub struct LibsrtpSessionKeys {
     pub auth_key: [u8; 20],
 }
 
-/// `wa_sfu_kdf` = HKDF-SHA256(salt, ikm, info=label, len). Labels are literal UTF-8.
-pub fn wa_sfu_kdf(label: &str, salt: &[u8], ikm: &[u8], len: usize) -> Vec<u8> {
-    hkdf_sha256(salt, ikm, label.as_bytes(), len)
-}
-
 fn keying_from_crypto_key(crypto_key: &[u8]) -> SrtpKeyingMaterial {
     let mut m = SrtpKeyingMaterial {
         master_key: [0u8; 16],
@@ -67,28 +63,45 @@ fn keying_from_crypto_key(crypto_key: &[u8]) -> SrtpKeyingMaterial {
 }
 
 /// mbedtls/Android hbh_key split: 16B master_key + 14B master_salt, two-stage KDF.
-fn derive_hbh_srtp_key_with_labels(hbh_key: &[u8], salt_label: &str, key_label: &str) -> Vec<u8> {
-    assert_eq!(hbh_key.len(), 30, "hbh_key must be 30 bytes");
+/// Returns `None` on malformed relay input (the only valid `hbh_key` is exactly 30 bytes).
+fn derive_hbh_srtp_key_with_labels(
+    hbh_key: &[u8],
+    salt_label: &str,
+    key_label: &str,
+) -> Option<Vec<u8>> {
+    if hbh_key.len() != 30 {
+        return None;
+    }
     let master_key = &hbh_key[0..16];
     let master_salt = &hbh_key[16..30];
-    let srtcp_salt = wa_sfu_kdf(salt_label, &NULL_SALT_32, master_salt, 32);
-    wa_sfu_kdf(key_label, &srtcp_salt, master_key, 30)
+    // WA SFU KDF == HKDF-SHA256 with the literal UTF-8 label as `info`.
+    let srtcp_salt = hkdf_sha256(&NULL_SALT_32, master_salt, salt_label.as_bytes(), 32);
+    Some(hkdf_sha256(
+        &srtcp_salt,
+        master_key,
+        key_label.as_bytes(),
+        30,
+    ))
 }
 
-pub fn derive_hbh_srtp_key_uplink(hbh_key: &[u8]) -> Vec<u8> {
+pub fn derive_hbh_srtp_key_uplink(hbh_key: &[u8]) -> Option<Vec<u8>> {
     derive_hbh_srtp_key_with_labels(hbh_key, "uplink hbh srtcp salt", "uplink hbh srtcp key")
 }
 
-pub fn derive_hbh_srtp_key_downlink(hbh_key: &[u8]) -> Vec<u8> {
+pub fn derive_hbh_srtp_key_downlink(hbh_key: &[u8]) -> Option<Vec<u8>> {
     derive_hbh_srtp_key_with_labels(hbh_key, "downlink hbh srtcp salt", "downlink hbh srtcp key")
 }
 
-pub fn keying_from_hbh_key_uplink(hbh_key: &[u8]) -> SrtpKeyingMaterial {
-    keying_from_crypto_key(&derive_hbh_srtp_key_uplink(hbh_key))
+pub fn keying_from_hbh_key_uplink(hbh_key: &[u8]) -> Option<SrtpKeyingMaterial> {
+    Some(keying_from_crypto_key(&derive_hbh_srtp_key_uplink(
+        hbh_key,
+    )?))
 }
 
-pub fn keying_from_hbh_key_downlink(hbh_key: &[u8]) -> SrtpKeyingMaterial {
-    keying_from_crypto_key(&derive_hbh_srtp_key_downlink(hbh_key))
+pub fn keying_from_hbh_key_downlink(hbh_key: &[u8]) -> Option<SrtpKeyingMaterial> {
+    Some(keying_from_crypto_key(&derive_hbh_srtp_key_downlink(
+        hbh_key,
+    )?))
 }
 
 /// 30-byte libsrtp AES-ICM key: 16B AES key followed by the 14B salt.
@@ -193,13 +206,13 @@ mod tests {
     fn hbh_uplink_derivation_matches_kat() {
         let k = kats();
         let hbh = hexd(&k, &["inputs", "hbhKey"]);
-        let uplink = derive_hbh_srtp_key_uplink(&hbh);
+        let uplink = derive_hbh_srtp_key_uplink(&hbh).unwrap();
         assert_eq!(
             hex::encode(&uplink),
             k["hbh_srtp"]["uplinkKey30"].as_str().unwrap()
         );
 
-        let keying = keying_from_hbh_key_uplink(&hbh);
+        let keying = keying_from_hbh_key_uplink(&hbh).unwrap();
         assert_eq!(
             hex::encode(keying.master_key),
             k["hbh_srtp"]["masterKey"].as_str().unwrap()
@@ -228,7 +241,7 @@ mod tests {
     fn hbh_icm_nonce_and_cipher_match_kat() {
         let k = kats();
         let hbh = hexd(&k, &["inputs", "hbhKey"]);
-        let session = expand_libsrtp_session_keys(&keying_from_hbh_key_uplink(&hbh));
+        let session = expand_libsrtp_session_keys(&keying_from_hbh_key_uplink(&hbh).unwrap());
         let ssrc = k["inputs"]["ssrc"].as_u64().unwrap() as u32;
         let seq = k["inputs"]["seq"].as_u64().unwrap();
         let roc = k["inputs"]["roc"].as_u64().unwrap();

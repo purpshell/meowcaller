@@ -119,6 +119,16 @@ current source and refresh any that diverged, **before** building from it. A mod
 must never be implemented from a stale datasheet. When in doubt, re-diff the
 embedded source against the current file and reconcile.
 
+**Every datasheet records the reference commit its verbatim is synced to.** Carry a
+`**Reference pinned at:** <full-40-char-SHA>` line in the datasheet header (just
+before the `## Reference source` section). It is the honest sync state, not a wish:
+stamp it only when the embedded verbatim actually matches the reference at that
+commit (full-file or the cited excerpt). When you refresh a datasheet, update its
+pin in the same commit; when a datasheet's source can't be located in the pinned
+reference (renamed/removed/never-upstreamed), mark the pin `UNMAPPED` with a note
+and stop — do not fabricate or guess the verbatim. This applies to every datasheet
+from now on.
+
 Each arrow `→ PAUSE` is a real stop: hand control back to the human. Do not chain
 steps without approval.
 

@@ -10,12 +10,14 @@ ping, and the response parsers. Transport layer.
 `wasmAllocate`, `ping`, and the `stun_proto.*` protobuf payloads). Copy that fixture
 JSON verbatim into `stun/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 ```rust
 //! STUN/WARP relay framing: RFC 5389 TLV encoder with WhatsApp's MESSAGE-INTEGRITY
 //! (HMAC-SHA1) and FINGERPRINT (CRC-32), the non-protobuf allocate builders, the
-//! WhatsApp ping, and the response parsers. Ported from zapo-caller `src/relay/stun-media.ts`.
+//! WhatsApp ping, and the response parsers.
 //!
 //! Transaction IDs are passed in (the I/O layer supplies 12 random bytes) so this stays
 //! pure and deterministically testable. Protobuf-based allocate builders (0x4024/0x4025
@@ -35,7 +37,6 @@ const ATTR_MESSAGE_INTEGRITY: u16 = 0x0008;
 const ATTR_FINGERPRINT: u16 = 0x8028;
 const ATTR_ERROR_CODE: u16 = 0x0009;
 const ATTR_RELAY_TOKEN: u16 = 0x4000;
-const ATTR_SENDER_SUBSCRIPTION_BINARY: u16 = 0x4023;
 const STUN_ATTR_STREAM_DESCRIPTORS: u16 = 0x4024;
 const STUN_ATTR_WASM_RELAY_ENDPOINT: u16 = 0x0016;
 
@@ -47,7 +48,7 @@ pub const MSG_ALLOCATE_ERROR: u16 = 0x0113;
 pub const MSG_WHATSAPP_PING: u16 = 0x0801;
 pub const MSG_WHATSAPP_PONG: u16 = 0x0802;
 
-/// voip-caller WASM StreamDescriptors template (attr 0x4024) — auxiliary stream SSRCs.
+/// WASM/Web StreamDescriptors template (attr 0x4024): auxiliary stream SSRCs.
 const WASM_STREAM_DESCRIPTORS_TEMPLATE: &[u8] = &[
     0x0a, 0x06, 0x18, 0xca, 0xbc, 0x85, 0xae, 0x04, 0x0a, 0x08, 0x10, 0x01, 0x18, 0xa5, 0xac, 0xaf,
     0xae, 0x0a, 0x0a, 0x08, 0x10, 0x02, 0x18, 0xd6, 0xa4, 0xe6, 0xf9, 0x0f, 0x0a, 0x08, 0x08, 0x01,
@@ -72,7 +73,7 @@ fn stun_attr(attr_type: u16, value: &[u8]) -> Vec<u8> {
     buf
 }
 
-/// CRC-32 (IEEE, reflected, poly 0xedb88320) — STUN FINGERPRINT.
+/// CRC-32 (IEEE, reflected, poly 0xedb88320) for the STUN FINGERPRINT.
 fn crc32(buf: &[u8]) -> u32 {
     let mut crc: u32 = 0xffff_ffff;
     for &b in buf {
@@ -192,48 +193,6 @@ pub fn build_wasm_stun_allocate_request(
     )
 }
 
-/// Native WA Allocate: 0x4000 token + optional 0x4023 SSRC subscription + MI.
-pub fn build_native_stun_allocate_request(
-    transaction_id: &[u8; 12],
-    relay_token: &[u8],
-    ssrc: u32,
-    integrity_key: &[u8],
-    include_subscription: bool,
-    include_fingerprint: bool,
-) -> Vec<u8> {
-    let mut attrs = stun_attr(ATTR_RELAY_TOKEN, relay_token);
-    if include_subscription {
-        attrs.extend_from_slice(&stun_attr(
-            ATTR_SENDER_SUBSCRIPTION_BINARY,
-            &create_native_sender_subscription(ssrc),
-        ));
-    }
-    encode_stun_request(
-        MSG_ALLOCATE_REQUEST,
-        transaction_id,
-        &attrs,
-        Some(integrity_key),
-        include_fingerprint,
-    )
-}
-
-/// Minimal Allocate: 0x4000 relay token + MI only.
-pub fn build_minimal_stun_allocate_request(
-    transaction_id: &[u8; 12],
-    relay_token: &[u8],
-    integrity_key: &[u8],
-    include_fingerprint: bool,
-) -> Vec<u8> {
-    let attrs = stun_attr(ATTR_RELAY_TOKEN, relay_token);
-    encode_stun_request(
-        MSG_ALLOCATE_REQUEST,
-        transaction_id,
-        &attrs,
-        Some(integrity_key),
-        include_fingerprint,
-    )
-}
-
 /// WhatsApp consent ping (type 0x0801, empty body).
 pub fn build_whatsapp_ping(transaction_id: &[u8; 12]) -> [u8; 20] {
     let mut out = [0u8; 20];
@@ -247,8 +206,8 @@ pub fn is_stun_packet(data: &[u8]) -> bool {
     data.len() >= 2 && (data[0] & 0xc0) == 0x00
 }
 
-pub fn stun_message_type(data: &[u8]) -> u16 {
-    (((data[0] & 0x3f) as u16) << 8) | data[1] as u16
+pub fn stun_message_type(data: &[u8]) -> Option<u16> {
+    (data.len() >= 2).then(|| (((data[0] & 0x3f) as u16) << 8) | data[1] as u16)
 }
 
 pub fn stun_transaction_id(data: &[u8]) -> Option<&[u8]> {
@@ -259,16 +218,18 @@ pub fn is_allocate_or_binding_success(data: &[u8]) -> bool {
     if !is_stun_packet(data) || data.len() < 20 {
         return false;
     }
-    let t = stun_message_type(data);
-    t == MSG_ALLOCATE_SUCCESS || t == MSG_BINDING_SUCCESS
+    matches!(
+        stun_message_type(data),
+        Some(MSG_ALLOCATE_SUCCESS | MSG_BINDING_SUCCESS)
+    )
 }
 
 pub fn is_allocate_error(data: &[u8]) -> bool {
-    is_stun_packet(data) && data.len() >= 2 && stun_message_type(data) == MSG_ALLOCATE_ERROR
+    is_stun_packet(data) && stun_message_type(data) == Some(MSG_ALLOCATE_ERROR)
 }
 
 pub fn is_whatsapp_pong(data: &[u8], transaction_id: Option<&[u8]>) -> bool {
-    if !is_stun_packet(data) || data.len() < 2 || stun_message_type(data) != MSG_WHATSAPP_PONG {
+    if !is_stun_packet(data) || stun_message_type(data) != Some(MSG_WHATSAPP_PONG) {
         return false;
     }
     match transaction_id {
@@ -311,7 +272,7 @@ pub fn parse_stun_error_code(data: &[u8]) -> Option<u16> {
     if data.len() < 20 {
         return None;
     }
-    let t = stun_message_type(data);
+    let t = stun_message_type(data)?;
     if t != MSG_ALLOCATE_ERROR && t != 0x0111 {
         return None;
     }
@@ -331,21 +292,11 @@ pub fn parse_stun_error_code(data: &[u8]) -> Option<u16> {
     None
 }
 
-const ATTR_USERNAME: u16 = 0x0006;
-const ATTR_REQUESTED_TRANSPORT: u16 = 0x0019;
-const ATTR_PRIORITY: u16 = 0x0024;
 const ATTR_SENDER_SUBSCRIPTIONS_V2: u16 = 0x4025;
-const ICE_PRIORITY: u32 = 0x00ff_ffff;
 
 // --- Minimal protobuf wire encoding for the STUN subscription attrs ---
 
-fn pb_varint(out: &mut Vec<u8>, mut v: u64) {
-    while v >= 0x80 {
-        out.push((v as u8 & 0x7f) | 0x80);
-        v >>= 7;
-    }
-    out.push(v as u8);
-}
+use crate::voip::encode_varint as pb_varint;
 
 fn pb_tag(out: &mut Vec<u8>, field: u32, wire: u32) {
     pb_varint(out, ((field << 3) | wire) as u64);
@@ -435,27 +386,6 @@ pub fn build_android_stun_allocate_request(
     )
 }
 
-/// Rust DataChannel Allocate: REQUESTED-TRANSPORT + USERNAME + 0x4000 voip protobuf + PRIORITY + MI.
-pub fn build_rust_stun_allocate_request(
-    transaction_id: &[u8; 12],
-    username: &[u8],
-    sender_subscriptions: &[u8],
-    integrity_key: &[u8],
-    include_fingerprint: bool,
-) -> Vec<u8> {
-    let mut attrs = stun_attr(ATTR_REQUESTED_TRANSPORT, &[17, 0, 0, 0]);
-    attrs.extend_from_slice(&stun_attr(ATTR_USERNAME, username));
-    attrs.extend_from_slice(&stun_attr(ATTR_RELAY_TOKEN, sender_subscriptions));
-    attrs.extend_from_slice(&stun_attr(ATTR_PRIORITY, &ICE_PRIORITY.to_be_bytes()));
-    encode_stun_request(
-        MSG_ALLOCATE_REQUEST,
-        transaction_id,
-        &attrs,
-        Some(integrity_key),
-        include_fingerprint,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,7 +463,7 @@ mod tests {
         let k = kats();
         let minimal = hexd(&k, &["stun", "minimalMi"]);
         assert!(is_stun_packet(&minimal));
-        assert_eq!(stun_message_type(&minimal), MSG_ALLOCATE_REQUEST);
+        assert_eq!(stun_message_type(&minimal), Some(MSG_ALLOCATE_REQUEST));
         let attrs = parse_stun_attributes(&minimal);
         // relay token (0x4000) + message-integrity (0x0008)
         assert_eq!(attrs.len(), 2);

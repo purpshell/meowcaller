@@ -9,6 +9,8 @@ compact RTCP reports and Sender Report. Transport/media layer.
 `rtp.dtxHeader20`, `rtp.estimate*`, and `rtcp.compact208`/`compact209`/`senderReport`).
 Copy that fixture JSON verbatim into `rtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 ### `rtp.rs`
@@ -16,7 +18,6 @@ Copy that fixture JSON verbatim into `rtp/testdata/`.
 ```rust
 //! RTP WARP framing: WhatsApp's 16-byte speech / 20-byte DTX headers (extension
 //! profile 0xdebe), Opus payload classifiers, and the send-side sequencer.
-//! Ported from zapo-caller `src/media/rtp.ts`.
 
 use crate::voip::warp::audio_piggyback_extension_for;
 
@@ -29,24 +30,24 @@ const RTP_VERSION: u8 = 2;
 const SRTP_AUTH_TAG_LEN: usize = 10;
 const SRTP_AUTH_TAG_LEN_SHORT: usize = 4;
 
-/// Frida Android opus_encode #1 — 18 bytes.
+/// Android first priming frame (18 bytes).
 pub const OPUS_PRIMING_FRAME_1: [u8; 18] = [
     0x12, 0x36, 0x26, 0x2b, 0x4a, 0xc8, 0x2b, 0x09, 0xc9, 0x1f, 0x34, 0xc2, 0xd6, 0x7a, 0x01, 0x73,
     0x1b, 0x2e,
 ];
-/// WASM/Web caller priming — 24 bytes.
+/// WASM/Web caller priming (24 bytes).
 pub const OPUS_PRIMING_FRAME_1_WASM: [u8; 24] = [
     0x32, 0x36, 0x26, 0x2b, 0x4a, 0xcb, 0x1b, 0x5f, 0xba, 0x91, 0x68, 0x7e, 0xb8, 0x50, 0x93, 0x58,
     0xe6, 0xd0, 0xa3, 0xa9, 0xd7, 0x1d, 0x81, 0x8c,
 ];
-/// Second priming frame — 5 bytes.
+/// Second priming frame (5 bytes).
 pub const OPUS_PRIMING_FRAME_2: [u8; 5] = [0x90, 0xb8, 0x14, 0x14, 0xc4];
 
 pub fn is_whatsapp_opus_rtp_payload(payload_type: u8) -> bool {
     payload_type == RTP_PAYLOAD_TYPE_OPUS || payload_type == 121
 }
 
-/// DTX / comfort-noise — RFC `0x10`, mlow `0x90`, and short warmup silence frames.
+/// DTX / comfort-noise: RFC `0x10`, mlow `0x90`, and short warmup silence frames.
 pub fn is_opus_dtx_payload(payload: &[u8]) -> bool {
     match payload.len() {
         0 => false,
@@ -147,7 +148,7 @@ pub fn is_rtp_version2(data: &[u8]) -> bool {
     data.len() >= 12 && (data[0] >> 6) & 0x03 == RTP_VERSION
 }
 
-/// Parse the fixed RTP header fields (extension word is not decoded, mirroring the TS).
+/// Parse the fixed RTP header fields (the extension word is not decoded).
 pub fn parse_rtp_header(data: &[u8]) -> Option<RtpHeader> {
     rtp_header_byte_length(data)?;
     Some(RtpHeader {
@@ -376,8 +377,8 @@ mod tests {
 
 ```rust
 //! RTCP: WhatsApp compact reports (PT 208/209) and a Sender Report (PT 200).
-//! Ported from zapo-caller `src/media/rtcp.ts`. The SR's NTP timestamp is taken
-//! as a `now_ms` argument so this stays pure/no-clock (caller passes `wacore::time`).
+//! The SR's NTP timestamp is taken as a `now_ms` argument so this stays
+//! pure/no-clock (caller passes `wacore::time`).
 
 use crate::voip::rtp::RTP_PAYLOAD_TYPE_OPUS;
 
@@ -422,7 +423,7 @@ pub struct RtcpSenderStats {
     pub rtp_timestamp: u32,
 }
 
-/// 12-byte compact RTCP (PT 208, RC=1) — 26 bytes on the wire with the SRTCP trailer.
+/// 12-byte compact RTCP (PT 208, RC=1); 26 bytes on the wire with the SRTCP trailer.
 pub fn build_compact_rtcp_208(local_ssrc: u32, remote_ssrc: u32) -> [u8; 12] {
     let mut buf = [0u8; 12];
     buf[0] = 0x81; // V=2, P=0, RC=1
@@ -434,7 +435,7 @@ pub fn build_compact_rtcp_208(local_ssrc: u32, remote_ssrc: u32) -> [u8; 12] {
     buf
 }
 
-/// 8-byte compact RTCP (PT 209, RC=1) — pre-speech ladder.
+/// 8-byte compact RTCP (PT 209, RC=1): pre-speech ladder.
 pub fn build_compact_rtcp_209(local_ssrc: u32) -> [u8; 8] {
     let mut buf = [0u8; 8];
     buf[0] = 0x81;
@@ -453,8 +454,8 @@ pub fn build_sender_report(local_ssrc: u32, stats: &RtcpSenderStats, now_ms: u64
     buf[2] = 0;
     buf[3] = 6; // (6+1)*4 = 28 bytes
     buf[4..8].copy_from_slice(&local_ssrc.to_be_bytes());
-    // NTP timestamp: seconds (upper 32) since 1900, fraction (lower 32). Truncated to u32
-    // to mirror the TS `>>> 0` arithmetic.
+    // NTP timestamp: seconds (upper 32) since 1900, fraction (lower 32). Both fields
+    // truncate to u32 (wrapping), matching the reference encoder.
     let ntp_sec = (now_ms / 1000).wrapping_add(NTP_UNIX_OFFSET_SECS) as u32;
     let ntp_frac = ((now_ms % 1000) as f64 / 1000.0 * 4_294_967_296.0) as u32;
     buf[8..12].copy_from_slice(&ntp_sec.to_be_bytes());

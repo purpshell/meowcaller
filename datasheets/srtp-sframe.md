@@ -13,12 +13,13 @@ varint header.
 `inputs.selfLid`, `inputs.peerLid`, `inputs.payload`, `inputs.sframeCounter`, and
 the expected `sframe.*` fields). Copy it verbatim into `srtp/testdata/`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust `wacore/src/voip/`).
+
 ## Reference source (verbatim — authoritative)
 
 
 ```rust
 //! SFrame end-to-end media encryption (AES-128-GCM) over the relay.
-//! Ported from zapo-caller `src/media/sframe.ts`.
 //!
 //! Three byte-level traps that silently fail if done the obvious way (all pinned by KATs):
 //!   1. GCM nonce = 8 zero bytes || counter as u64 LITTLE-endian (16-byte nonce, GHASH-derived J0).
@@ -29,7 +30,7 @@ use aes_gcm::aes::Aes128;
 use aes_gcm::aes::cipher::consts::U16;
 use aes_gcm::{AesGcm, KeyInit, Nonce, aead::Aead};
 
-use crate::voip::hkdf_sha256;
+use crate::voip::{encode_varint, hkdf_sha256};
 
 /// AES-128-GCM with WhatsApp's non-standard 16-byte nonce.
 type Aes128Gcm16 = AesGcm<Aes128, U16>;
@@ -39,11 +40,6 @@ pub const KDF_LABEL_WARP_AUTH: &str = "warp auth key";
 const GCM_TAG_LEN: usize = 16;
 const AES_KEY_LEN: usize = 16;
 
-/// `mbedtls_hkdf` style (== standard HKDF-SHA256 expand). Matches Android `derive_sframe_key`.
-pub fn mbedtls_hkdf_sha256(salt: &[u8], ikm: &[u8], info: &str, okm_len: usize) -> Vec<u8> {
-    hkdf_sha256(salt, ikm, info.as_bytes(), okm_len)
-}
-
 fn split_call_key(call_key: &[u8]) -> Option<(&[u8], &[u8])> {
     if call_key.len() != 32 {
         return None;
@@ -52,24 +48,11 @@ fn split_call_key(call_key: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 /// Android appends the participant JID to the label: `e2e sframe key<id>`.
-/// Primary `@lid` without a device suffix uses `:0`.
+/// Primary `@lid` without a device suffix uses `:0`. Intentionally a separate protocol surface from
+/// E2E-SRTP's variant; they coincide today, so both delegate to one helper. Un-shim here if SFrame
+/// ever needs to diverge.
 pub fn format_sframe_participant_id(jid: &str) -> String {
-    let bare = jid.split('/').next().unwrap_or(jid).trim();
-    let Some(at) = bare.rfind('@') else {
-        return bare.to_string();
-    };
-    if at == 0 {
-        return bare.to_string();
-    }
-    let user = &bare[..at];
-    let domain = &bare[at + 1..];
-    if user.contains(':') {
-        return format!("{user}@{domain}");
-    }
-    if domain == "lid" {
-        return format!("{user}:0@{domain}");
-    }
-    format!("{user}@{domain}")
+    crate::voip::format_participant_id(jid)
 }
 
 pub fn sframe_info_label(participant_id: &str) -> String {
@@ -82,10 +65,11 @@ pub fn derive_e2e_sframe_key_for_participant(
     participant_id: &str,
 ) -> Option<Vec<u8>> {
     let (salt, ikm) = split_call_key(call_key)?;
-    Some(mbedtls_hkdf_sha256(
+    // Android derive_sframe_key == standard HKDF-SHA256 expand with the label as `info`.
+    Some(hkdf_sha256(
         salt,
         ikm,
-        &sframe_info_label(participant_id),
+        sframe_info_label(participant_id).as_bytes(),
         32,
     ))
 }
@@ -94,18 +78,12 @@ pub fn derive_warp_auth_key(call_key: &[u8]) -> Option<Vec<u8>> {
     if call_key.len() != 32 {
         return None;
     }
-    Some(mbedtls_hkdf_sha256(&[], call_key, KDF_LABEL_WARP_AUTH, 32))
-}
-
-fn encode_varint(value: u64) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut v = value;
-    while v > 0x7f {
-        out.push(((v & 0x7f) | 0x80) as u8);
-        v >>= 7;
-    }
-    out.push((v & 0xff) as u8);
-    out
+    Some(hkdf_sha256(
+        &[],
+        call_key,
+        KDF_LABEL_WARP_AUTH.as_bytes(),
+        32,
+    ))
 }
 
 fn decode_varint(data: &[u8], offset: usize) -> Option<(u64, usize)> {
@@ -135,12 +113,10 @@ fn counter_to_iv(counter: u64) -> [u8; 16] {
 }
 
 fn build_sframe_header(counter: u64, key_id: u64) -> Vec<u8> {
-    let counter_var = encode_varint(counter);
-    let key_id_var = encode_varint(key_id);
-    let total_len = counter_var.len() + key_id_var.len() + 1;
-    let mut header = Vec::with_capacity(total_len);
-    header.extend_from_slice(&counter_var);
-    header.extend_from_slice(&key_id_var);
+    let mut header = Vec::new();
+    encode_varint(&mut header, counter);
+    encode_varint(&mut header, key_id);
+    let total_len = header.len() + 1;
     header.push(total_len as u8);
     header
 }
@@ -159,13 +135,6 @@ fn parse_sframe_header(header: &[u8]) -> Option<(u64, u64)> {
     Some((counter, key_id))
 }
 
-fn looks_like_opus(payload: &[u8]) -> bool {
-    let Some(&b0) = payload.first() else {
-        return false;
-    };
-    b0 == 0x10 || (b0 & 0xf8) == 0x50 || (b0 & 0xfc) == 0xf8
-}
-
 fn gcm_encrypt(key: &[u8], nonce16: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
     let cipher = Aes128Gcm16::new_from_slice(&key[..AES_KEY_LEN]).expect("16-byte key");
     let nonce = Nonce::<U16>::try_from(&nonce16[..]).expect("16-byte nonce");
@@ -178,6 +147,18 @@ fn gcm_decrypt(key: &[u8], nonce16: &[u8; 16], ciphertext_with_tag: &[u8]) -> Op
     let cipher = Aes128Gcm16::new_from_slice(&key[..AES_KEY_LEN]).ok()?;
     let nonce = Nonce::<U16>::try_from(&nonce16[..]).ok()?;
     cipher.decrypt(&nonce, ciphertext_with_tag).ok()
+}
+
+/// Outcome of [`SframeSession::decrypt`]. Discrimination is by GCM authentication, not a payload
+/// heuristic: a frame that parses as a valid SFrame header AND authenticates is `Decrypted`;
+/// anything else is `Plaintext`: the peer ships plain Opus inside E2E-SRTP without SFrame-wrapping,
+/// so those bytes are the payload and must be used verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SframeIn {
+    /// The frame was a real SFrame frame; GCM auth passed. Inner is the recovered plaintext.
+    Decrypted(Vec<u8>),
+    /// Not an authenticatable SFrame frame; the raw frame bytes are the plaintext payload.
+    Plaintext,
 }
 
 /// SFrame send/recv with the per-direction keys (encrypt for peer, decrypt for self).
@@ -222,42 +203,32 @@ impl SframeSession {
         out
     }
 
-    /// Decrypt one frame, falling back to the raw bytes when they look like plain Opus.
-    pub fn decrypt(&self, frame: &[u8]) -> Option<Vec<u8>> {
+    /// Decrypt one frame. Returns [`SframeIn::Decrypted`] only when the trailing SFrame header parses
+    /// and the GCM tag authenticates; otherwise [`SframeIn::Plaintext`], the frame is plain Opus to
+    /// be used as-is. The caller branches on intent rather than guessing from the payload bytes.
+    pub fn decrypt(&self, frame: &[u8]) -> SframeIn {
+        // Too small to hold ciphertext + tag + a 3-byte header: it's plaintext Opus.
         if frame.len() < GCM_TAG_LEN + 3 {
-            return None;
+            return SframeIn::Plaintext;
         }
         let header_len = *frame.last().unwrap() as usize;
         if header_len < 3 || header_len > frame.len() {
-            return if looks_like_opus(frame) {
-                Some(frame.to_vec())
-            } else {
-                None
-            };
+            return SframeIn::Plaintext;
         }
         let header_start = frame.len() - header_len;
         let header = &frame[header_start..];
         let ciphertext = &frame[..header_start];
         if ciphertext.len() < GCM_TAG_LEN + 1 {
-            return None;
+            return SframeIn::Plaintext;
         }
         let Some((counter, _key_id)) = parse_sframe_header(header) else {
-            return if looks_like_opus(frame) {
-                Some(frame.to_vec())
-            } else {
-                None
-            };
+            return SframeIn::Plaintext;
         };
         let iv = counter_to_iv(counter);
+        // GCM auth is the sole discriminator: a forged/plain frame fails the tag → pass-through.
         match gcm_decrypt(&self.decrypt_key, &iv, ciphertext) {
-            Some(plain) => Some(plain),
-            None => {
-                if looks_like_opus(frame) {
-                    Some(frame.to_vec())
-                } else {
-                    None
-                }
-            }
+            Some(plain) => SframeIn::Decrypted(plain),
+            None => SframeIn::Plaintext,
         }
     }
 }
@@ -306,8 +277,8 @@ mod tests {
     fn encrypt_matches_kat() {
         let k = kats();
         let call_key = hexd(&k, &["inputs", "callKey"]);
-        // The TS captures encrypt with encryptKey = peerKey[0:16], counter starting at... the
-        // KAT used a fixed counter of 5, so seed tx_counter to 5 and encrypt once.
+        // The KAT captures encrypt with encryptKey = peerKey[0:16] at a fixed counter of 5,
+        // so seed tx_counter to 5 and encrypt once.
         let mut s = SframeSession::new(
             &call_key,
             k["inputs"]["selfLid"].as_str().unwrap(),
@@ -334,7 +305,10 @@ mod tests {
         let receiver = SframeSession::new(&call_key, peer_lid, self_lid).unwrap();
         let payload = b"hello sframe payload";
         let frame = sender.encrypt(payload);
-        assert_eq!(receiver.decrypt(&frame).as_deref(), Some(&payload[..]));
+        assert_eq!(
+            receiver.decrypt(&frame),
+            SframeIn::Decrypted(payload.to_vec())
+        );
     }
 
     /// A real SFrame frame decrypted under the WRONG key must NOT yield the plaintext: the GCM tag
@@ -355,18 +329,18 @@ mod tests {
         let mut other = call_key.clone();
         other[0] ^= 0xff;
         let receiver = SframeSession::new(&other, peer_lid, self_lid).unwrap();
-        let out = receiver.decrypt(&frame);
-        assert_ne!(
-            out.as_deref(),
-            Some(&payload[..]),
+        // GCM auth rejects → fail-closed to Plaintext (never a forged Decrypted plaintext).
+        assert_eq!(
+            receiver.decrypt(&frame),
+            SframeIn::Plaintext,
             "wrong key must not recover the plaintext (GCM auth must reject)"
         );
     }
 
     /// The peer ships plain Opus inside E2E-SRTP (it does NOT SFrame-wrap), so recv `decrypt` must
-    /// pass the bytes through UNCHANGED — never partially GCM-mangle them. Captured-call evidence:
-    /// inbound frames repeat byte-for-byte (Opus DTX comfort noise), which fresh GCM ciphertext
-    /// can never do. These are the exact TOC families seen on the wire (0x00/0x12/0x50/0x90).
+    /// report `Plaintext` so the caller uses the raw bytes UNCHANGED, never partially GCM-mangle
+    /// them. Captured-call evidence: inbound frames repeat byte-for-byte (Opus DTX comfort noise),
+    /// which fresh GCM ciphertext can never do. These are TOC families seen on the wire.
     #[test]
     fn plain_opus_passes_through_unchanged() {
         let k = kats();
@@ -375,9 +349,9 @@ mod tests {
         let peer_lid = k["inputs"]["peerLid"].as_str().unwrap();
         let receiver = SframeSession::new(&call_key, self_lid, peer_lid).unwrap();
 
-        // Byte-exact frames lifted from a real inbound call dump (post-E2E-SRTP payloads). Each
-        // must come back identical: SFrame decrypt either skips (varint/header mismatch) or the
-        // GCM auth fails, and both paths return the raw bytes.
+        // Byte-exact frames lifted from a real inbound call dump (post-E2E-SRTP payloads). Each must
+        // classify as Plaintext: SFrame decrypt either skips (too short / varint/header mismatch) or
+        // the GCM auth fails; both fail-closed to Plaintext so the caller passes the raw bytes on.
         let plain_opus_frames: &[&[u8]] = &[
             &[0x00],                                                       // 1-byte DTX silence
             &hex::decode("90b81414c4").unwrap(), // 0x90 comfort noise (x85)
@@ -386,11 +360,10 @@ mod tests {
             &hex::decode("1236262b4ac920b1206166637b5af2").unwrap(), // a real 0x12 frame
         ];
         for f in plain_opus_frames {
-            let out = receiver.decrypt(f).unwrap_or_else(|| f.to_vec());
             assert_eq!(
-                out.as_slice(),
-                *f,
-                "plain Opus frame {} was altered by SFrame recv",
+                receiver.decrypt(f),
+                SframeIn::Plaintext,
+                "plain Opus frame {} must classify as Plaintext (caller uses raw bytes)",
                 hex::encode(f)
             );
         }
