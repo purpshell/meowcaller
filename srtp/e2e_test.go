@@ -55,14 +55,12 @@ func mustHex(t *testing.T, s string) []byte {
 // TestDeriveE2eKeysMatchesKAT derives the peer and self session keys from the call
 // key and asserts cipher/salt/auth match the kats.json e2e_srtp expectations.
 func TestDeriveE2eKeysMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/e2e bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	callKey := mustHex(t, k.Inputs.CallKey)
 
-	peer, ok := DeriveE2eKeys(callKey, k.Inputs.PeerLid)
-	if !ok {
-		t.Fatal("peer derive returned ok=false")
+	peer, err := DeriveE2eKeys(callKey, k.Inputs.PeerLid)
+	if err != nil {
+		t.Fatalf("peer derive: %v", err)
 	}
 	if !bytes.Equal(peer.CipherKey[:], mustHex(t, k.E2eSrtp.PeerCipherKey)) {
 		t.Errorf("peer cipher_key = %x, want %s", peer.CipherKey, k.E2eSrtp.PeerCipherKey)
@@ -74,9 +72,9 @@ func TestDeriveE2eKeysMatchesKAT(t *testing.T) {
 		t.Errorf("peer auth_key = %x, want %s", peer.AuthKey, k.E2eSrtp.PeerAuthKey)
 	}
 
-	self, ok := DeriveE2eKeys(callKey, k.Inputs.SelfLid)
-	if !ok {
-		t.Fatal("self derive returned ok=false")
+	self, err := DeriveE2eKeys(callKey, k.Inputs.SelfLid)
+	if err != nil {
+		t.Fatalf("self derive: %v", err)
 	}
 	if !bytes.Equal(self.CipherKey[:], mustHex(t, k.E2eSrtp.SelfCipherKey)) {
 		t.Errorf("self cipher_key = %x, want %s", self.CipherKey, k.E2eSrtp.SelfCipherKey)
@@ -89,8 +87,6 @@ func TestDeriveE2eKeysMatchesKAT(t *testing.T) {
 // TestRtpIVMatchesKAT builds the per-packet IV from the peer salt and asserts it
 // matches the kats.json rtpIv.
 func TestRtpIVMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/e2e bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	var salt [14]byte
 	copy(salt[:], mustHex(t, k.E2eSrtp.PeerSalt))
@@ -103,19 +99,23 @@ func TestRtpIVMatchesKAT(t *testing.T) {
 // TestCryptPayloadMatchesKAT encrypts the payload and asserts the ciphertext matches
 // cipher_out, then decrypts to confirm the cipher round-trips.
 func TestCryptPayloadMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/e2e bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	var keys E2eSrtpKeys
 	copy(keys.CipherKey[:], mustHex(t, k.E2eSrtp.PeerCipherKey))
 	copy(keys.Salt[:], mustHex(t, k.E2eSrtp.PeerSalt))
 	payload := mustHex(t, k.Inputs.Payload)
 
-	ct := CryptPayload(&keys, k.Inputs.SSRC, k.Inputs.Seq, k.Inputs.Roc, payload)
+	ct, err := CryptPayload(&keys, k.Inputs.SSRC, k.Inputs.Seq, k.Inputs.Roc, payload)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
 	if got := hex.EncodeToString(ct); got != k.E2eSrtp.CipherOut {
 		t.Errorf("cipher_out = %s, want %s", got, k.E2eSrtp.CipherOut)
 	}
-	pt := CryptPayload(&keys, k.Inputs.SSRC, k.Inputs.Seq, k.Inputs.Roc, ct)
+	pt, err := CryptPayload(&keys, k.Inputs.SSRC, k.Inputs.Seq, k.Inputs.Roc, ct)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
 	if !bytes.Equal(pt, payload) {
 		t.Errorf("decrypt round-trip = %x, want %x", pt, payload)
 	}
@@ -124,8 +124,6 @@ func TestCryptPayloadMatchesKAT(t *testing.T) {
 // TestRocTrackerWraps exercises both the send-side monotonic tracker and the
 // recv-side guess estimator across wraps, reorder dips, and late packets.
 func TestRocTrackerWraps(t *testing.T) {
-	t.Skip("blocked: srtp/e2e bodies are stubs; enable when implemented")
-
 	var tx RocTracker
 	if got := tx.Advance(0xFFFE); got != 0 {
 		t.Fatalf("seed: roc=%d, want 0", got)

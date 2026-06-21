@@ -323,13 +323,13 @@ type E2eSrtpKeys struct {
 	AuthKey   [20]byte
 }
 
-func DeriveE2eKeys(callKey []byte, participantLid string) (E2eSrtpKeys, bool)
+func DeriveE2eKeys(callKey []byte, participantLid string) (E2eSrtpKeys, error)
 
-func DeriveE2eKeysFromRaw(rawE2e []byte, participantLid string) (E2eSrtpKeys, bool)
+func DeriveE2eKeysFromRaw(rawE2e []byte, participantLid string) (E2eSrtpKeys, error)
 
 func BuildE2eRtpIV(salt []byte, ssrc uint32, roc uint32, seq uint16) [16]byte
 
-func CryptPayload(keys *E2eSrtpKeys, ssrc uint32, seq uint16, roc uint32, payload []byte) []byte
+func CryptPayload(keys *E2eSrtpKeys, ssrc uint32, seq uint16, roc uint32, payload []byte) ([]byte, error)
 
 type RocTracker struct {
 	// unexported state: roc uint32, lastSeq uint16, initialized bool

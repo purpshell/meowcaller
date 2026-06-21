@@ -7,18 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### srtp/e2e — module #18 scaffolded (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+### srtp/e2e — module #18 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - New `srtp` package: `E2eSrtpKeys` + `DeriveE2eKeys`/`DeriveE2eKeysFromRaw`
-  (HKDF-SHA256 master → AES-CM PRF session keys), `BuildE2eRtpIV`, `CryptPayload`
-  (AES-128-CTR), and the `RocTracker` (send, monotonic) / `RecvRocTracker` (recv,
-  RFC 3711 guess-index) ROC trackers. All signatures + doc + `Source of truth` pins,
-  bodies are TODO stubs. KAT (`srtp/testdata/kats.json`, copied verbatim from the
-  reference — synthetic callKey/LIDs, no PII) wires the derive/iv/crypt/roc tests but
-  `t.Skip`'d until bodies land (suite stays green). Datasheet Go envelope refreshed
-  to the current verbatim (`derive_e2e_keys` → Option-shaped `(keys, ok)`; new
-  `RecvRocTracker`). **scaffolded**. Open decisions for the human: the Option→Go
-  shape (chose `(E2eSrtpKeys, bool)`), and panic vs error on the AES 16-byte
-  key/IV invariants.
+  (HKDF-SHA256 master via the #17 `util.HKDFSHA256` → AES-CM PRF session keys),
+  `BuildE2eRtpIV`, `CryptPayload` (AES-128-CTR), and the `RocTracker` (send,
+  monotonic) / `RecvRocTracker` (recv, RFC 3711 guess-index) ROC trackers. Bodies
+  implemented over stdlib `crypto/aes`+`crypto/cipher` (no new deps). **Error-based
+  throughout** (no panics): the `<32`-byte guards return `errShortKey`, and the AES
+  16-byte key/IV invariants bubble the `crypto/aes` error rather than aborting —
+  matching the hkdf decision. KAT (`srtp/testdata/kats.json`, copied verbatim from
+  the reference; synthetic callKey/LIDs, no PII) passes byte-exact: peer/self key
+  derivation, RTP IV, AES-CTR cipher_out + round-trip, and both ROC trackers across
+  wraps/reorder/late-packet. CodeRabbit: clean. **KAT-verified**.
 
 ### util/hkdf — module #17 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - New `util` package: `HKDFSHA256(salt, ikm, info, length) ([]byte, error)` — the
