@@ -50,6 +50,13 @@ recv-side ROC tracker — all on real audio, no network.
    first run). After the socket is ready we wait for the connection, sync the
    critical app-state block, and announce presence so the server delivers call
    signaling.
+
+   > **Two separate databases.** whatsmeow's auth/session store (`wa-voip.db`) and
+   > meowcaller's own call store (`meowcaller.db`) are *different files with
+   > independent connections*. meowcaller never writes to whatsmeow's auth DB, so a
+   > busy call can't lock or corrupt the device session. Both are gitignored and
+   > disposable; deleting `wa-voip.db` just means re-pairing (no migration), and
+   > `meowcaller.db` is recreated on next run.
 2. **LID resolution** — a phone target is mapped to the peer's `@lid` via a usync
    `GetUserInfo` query (which carries the `lid` field and persists the PN→LID
    mapping). The call's E2E keys and SSRCs derive from the LID, so this happens

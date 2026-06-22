@@ -25,10 +25,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// connectClient opens the local store and logs in (QR on first run), returning a
-// connected client.
+// meowcallerDBPath is meowcaller's own call store, deliberately a different file
+// from whatsmeow's wa-voip.db auth store.
+const meowcallerDBPath = "meowcaller.db"
+
+// connectClient opens whatsmeow's auth store (its own file, separate from the
+// meowcaller call store) and logs in (QR on first run), returning a connected
+// client. busy_timeout absorbs brief lock contention so a busy session doesn't
+// error out with "database is locked".
 func connectClient(ctx context.Context) (*whatsmeow.Client, error) {
-	container, err := sqlstore.New(ctx, "sqlite", "file:wa-voip.db?_pragma=foreign_keys(1)", waLog.Stdout("db", "WARN", true))
+	container, err := sqlstore.New(ctx, "sqlite", "file:wa-voip.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", waLog.Stdout("db", "WARN", true))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -146,6 +152,12 @@ func runCall(ctx context.Context, target string) error {
 	}
 	defer cli.Disconnect()
 
+	store, err := openMeowStore(ctx, meowcallerDBPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
 	self := cli.Store.GetLID()
 	if self.IsEmpty() {
 		return errors.New("no own LID on this session")
@@ -196,11 +208,13 @@ func runCall(ctx context.Context, target string) error {
 	})
 	// Pre-seed the media coordinator with our generated callKey, then bring up media
 	// when the relay endpoint arrives (relaylatency/transport) after the peer accepts.
-	coord := newCoordinator(ctx, cli)
+	coord := newCoordinator(ctx, cli, store)
 	m := coord.entry(callID)
 	m.callKey = callKey[:]
 	m.selfLID = self.String()
 	m.peerLID = peerLID.String()
+	m.direction = "outgoing"
+	coord.persist(callID, "calling", m)
 	cli.AddEventHandler(func(evt any) {
 		switch e := evt.(type) {
 		case *events.CallRelayLatency:
@@ -209,6 +223,7 @@ func runCall(ctx context.Context, target string) error {
 			coord.onRelay(e.CallID, e.Data)
 		case *events.CallTerminate:
 			log.Printf("call %s terminated: %s", e.CallID, e.Reason)
+			coord.onTerminate(e.CallID)
 		}
 	})
 
@@ -224,24 +239,51 @@ func runCall(ctx context.Context, target string) error {
 // callKey (from the offer) and the relay data (from the offer or a later
 // relaylatency/transport stanza). Media starts once both are present.
 type callMedia struct {
-	callKey []byte
-	relay   *relayData
-	selfLID string
-	peerLID string
-	started bool
+	callKey   []byte
+	relay     *relayData
+	selfLID   string
+	peerLID   string
+	direction string
+	started   bool
 }
 
 // coordinator answers inbound offers and brings up the media loop once the relay
 // endpoint arrives.
 type coordinator struct {
-	ctx  context.Context
-	cli  *whatsmeow.Client
-	mu   sync.Mutex
-	cmap map[string]*callMedia
+	ctx   context.Context
+	cli   *whatsmeow.Client
+	store *meowStore
+	mu    sync.Mutex
+	cmap  map[string]*callMedia
 }
 
-func newCoordinator(ctx context.Context, cli *whatsmeow.Client) *coordinator {
-	return &coordinator{ctx: ctx, cli: cli, cmap: map[string]*callMedia{}}
+func newCoordinator(ctx context.Context, cli *whatsmeow.Client, store *meowStore) *coordinator {
+	return &coordinator{ctx: ctx, cli: cli, store: store, cmap: map[string]*callMedia{}}
+}
+
+// persist writes a call's current meowcaller-side state to the meowcaller store.
+// It never aborts the call: a store error is logged and the call continues.
+func (c *coordinator) persist(callID, phase string, m *callMedia) {
+	if c.store == nil {
+		return
+	}
+	rec := callRecord{
+		CallID:    callID,
+		Direction: m.direction,
+		SelfLID:   m.selfLID,
+		PeerLID:   m.peerLID,
+		CallKey:   m.callKey,
+		Phase:     phase,
+	}
+	if m.relay != nil {
+		if ep := getMediaRelayEndpoint(m.relay); ep != nil && len(ep.addresses) > 0 {
+			rec.RelayIP = ep.addresses[0].ipv4
+			rec.RelayPort = ep.addresses[0].port
+		}
+	}
+	if err := c.store.SaveCall(c.ctx, rec); err != nil {
+		log.Printf("meowcaller-db: save call %s: %v", callID, err)
+	}
 }
 
 func (c *coordinator) entry(callID string) *callMedia {
@@ -287,9 +329,11 @@ func (c *coordinator) onOffer(e *events.CallOffer) {
 	m.callKey = callKey
 	m.selfLID = c.cli.Store.GetLID().String()
 	m.peerLID = peer.String()
+	m.direction = "incoming"
 	if r := findRelay(e.Data); r != nil {
 		m.relay = parseRelayData(r)
 	}
+	c.persist(e.CallID, "accepted", m)
 	c.maybeStart(e.CallID, m)
 }
 
@@ -303,7 +347,18 @@ func (c *coordinator) onRelay(callID string, data *waBinary.Node) {
 	defer c.mu.Unlock()
 	m := c.entry(callID)
 	m.relay = parseRelayData(r)
+	c.persist(callID, "relay", m)
 	c.maybeStart(callID, m)
+}
+
+// onTerminate records a call's end in the meowcaller store.
+func (c *coordinator) onTerminate(callID string) {
+	if c.store == nil {
+		return
+	}
+	if err := c.store.SetPhase(c.ctx, callID, "terminated"); err != nil {
+		log.Printf("meowcaller-db: terminate %s: %v", callID, err)
+	}
 }
 
 // maybeStart launches the media loop once the callKey and relay endpoint are known.
@@ -312,6 +367,7 @@ func (c *coordinator) maybeStart(callID string, m *callMedia) {
 		return
 	}
 	m.started = true
+	c.persist(callID, "media", m)
 	log.Printf("▶ starting media for %s", callID)
 	go func() {
 		if err := runMedia(c.ctx, callID, m.callKey, m.selfLID, m.peerLID, m.relay); err != nil {
@@ -327,7 +383,16 @@ func runListen(ctx context.Context, autoAccept bool) error {
 		return err
 	}
 	defer cli.Disconnect()
-	coord := newCoordinator(ctx, cli)
+
+	store, err := openMeowStore(ctx, meowcallerDBPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if n, err := store.CountCalls(ctx); err == nil {
+		log.Printf("meowcaller store: %s (%d call(s) recorded), separate from whatsmeow's wa-voip.db", meowcallerDBPath, n)
+	}
+	coord := newCoordinator(ctx, cli, store)
 
 	cli.AddEventHandler(func(evt any) {
 		switch e := evt.(type) {
@@ -346,6 +411,7 @@ func runListen(ctx context.Context, autoAccept bool) error {
 			}
 		case *events.CallTerminate:
 			log.Printf("call %s terminated: %s", e.CallID, e.Reason)
+			coord.onTerminate(e.CallID)
 		}
 	})
 	log.Printf("listening for calls (auto-accept=%v). Ctrl+C to stop.", autoAccept)
