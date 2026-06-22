@@ -177,27 +177,29 @@ func callKeyPlaintext(callKey []byte) ([]byte, error) {
 }
 
 // encryptCallKeyForDevice encrypts the callKey to one peer device's Signal session,
-// fetching a pre-key bundle if no session exists yet. Returns the ciphertext and the
-// enc type ("pkmsg" for a fresh session, "msg" for an existing one).
-func encryptCallKeyForDevice(ctx context.Context, cli *whatsmeow.Client, dev types.JID, callKey []byte) ([]byte, string, error) {
+// fetching a pre-key bundle if no session exists yet. Returns the ciphertext, the
+// enc type ("pkmsg" for a fresh session, "msg" for an existing one), and whether
+// the offer must carry our <device-identity> (true for pkmsg, so the peer can
+// verify the new session — without it the server drops the offer unacked).
+func encryptCallKeyForDevice(ctx context.Context, cli *whatsmeow.Client, dev types.JID, callKey []byte) ([]byte, string, bool, error) {
 	pt, err := callKeyPlaintext(callKey)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	di := cli.DangerousInternals()
-	enc, _, err := di.EncryptMessageForDevice(ctx, pt, dev, nil, nil, nil)
+	enc, needIdentity, err := di.EncryptMessageForDevice(ctx, pt, dev, nil, nil, nil)
 	if err != nil {
 		bundles := di.FetchPreKeysNoError(ctx, []types.JID{dev})
-		enc, _, err = di.EncryptMessageForDevice(ctx, pt, dev, bundles[dev], nil, nil)
+		enc, needIdentity, err = di.EncryptMessageForDevice(ctx, pt, dev, bundles[dev], nil, nil)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 	}
 	ct, ok := enc.Content.([]byte)
 	if !ok {
-		return nil, "", errors.New("enc node has no ciphertext")
+		return nil, "", false, errors.New("enc node has no ciphertext")
 	}
-	return ct, enc.AttrGetter().String("type"), nil
+	return ct, enc.AttrGetter().String("type"), needIdentity, nil
 }
 
 // runCall connects, resolves the peer LID, discovers devices, encrypts a fresh
@@ -236,12 +238,24 @@ func runCall(ctx context.Context, target string) error {
 		return err
 	}
 	deviceKeys := make([]signaling.OfferDeviceKey, 0, len(devices))
+	needIdentity := false
 	for _, dev := range devices {
-		ct, encType, err := encryptCallKeyForDevice(ctx, cli, dev, callKey[:])
+		ct, encType, ni, err := encryptCallKeyForDevice(ctx, cli, dev, callKey[:])
 		if err != nil {
 			return fmt.Errorf("encrypt callKey for %s: %w", dev, err)
 		}
+		needIdentity = needIdentity || ni
 		deviceKeys = append(deviceKeys, signaling.OfferDeviceKey{DeviceJid: dev, Ciphertext: ct, EncType: encType})
+	}
+
+	// pkmsg offers must carry our signed device identity so the peer can verify the
+	// new session; the server drops the offer (no ack) otherwise.
+	var deviceIdentity []byte
+	if needIdentity {
+		deviceIdentity, err = proto.Marshal(cli.Store.Account)
+		if err != nil {
+			return fmt.Errorf("marshal device identity: %w", err)
+		}
 	}
 
 	// Include the peer's privacy token when we have one (the server requires it to
@@ -256,12 +270,13 @@ func runCall(ctx context.Context, target string) error {
 
 	callID := newCallID()
 	offer := signaling.BuildOffer(&signaling.OfferParams{
-		CallID:       callID,
-		To:           peerLID,
-		CallCreator:  self,
-		DeviceKeys:   deviceKeys,
-		PrivacyToken: privacyToken,
-		Capability:   signaling.CapabilityOffer,
+		CallID:         callID,
+		To:             peerLID,
+		CallCreator:    self,
+		DeviceKeys:     deviceKeys,
+		PrivacyToken:   privacyToken,
+		Capability:     signaling.CapabilityOffer,
+		DeviceIdentity: deviceIdentity,
 	})
 	// The builder leaves the <call> stanza id to the I/O layer. Without a stanza id
 	// the server can't route/ack the offer, so it never reaches the callee.
