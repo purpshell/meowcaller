@@ -84,11 +84,19 @@ meowcaller/
   datasheets/   per-module datasheets
 ```
 
-Pure-Go dependencies only, and minimal: the sole third-party dependency is
-`google.golang.org/protobuf` (the protobuf runtime, as whatsmeow itself uses) for
-decoding the embedded table blobs, which share a `.proto` schema with the reference.
-No other third-party dependencies in the codec. Every `.go` file carries the project
-license header.
+Pure-Go dependencies only, and minimal. The **codec** (`mlow/`) and the keying/
+framing layers stay on `google.golang.org/protobuf` alone (the protobuf runtime, as
+whatsmeow itself uses) for decoding the embedded table blobs, which share a `.proto`
+schema with the reference. The **signaling and transport layers** additionally use:
+
+- `go.mau.fi/whatsmeow` — its `binary` (WABinary `Node`) and `types` (`JID`)
+  packages for the call-control stanzas, rather than re-implementing the node tree.
+- `github.com/pion/*` (`pion/dtls`, `pion/sctp`, `pion/datachannel`, …) for the
+  relay media transport (UDP→DTLS→SCTP→DataChannel).
+- possibly `libsignal-protocol-go` later, if the offer/accept key path needs it.
+
+These were adopted by explicit human decision; no other third-party dependencies are
+added without one. Every `.go` file carries the project license header.
 
 ---
 
