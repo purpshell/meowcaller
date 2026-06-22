@@ -7,6 +7,19 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### call — module #28 scaffolded (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- Scaffold the `CallRegistry` (root package `meowcaller`, porting `src/voip/registry.rs`):
+  the thread-safe per-call map with `Insert`/`SetMediaTask`/`Phase`/`Transition`/
+  `Snapshot`/`ActiveCount`/`Remove`/`AbortAll`. Signatures + doc + `Source of truth`
+  pins, bodies are TODO stubs. KAT (inline: bookkeeping contract + media-task
+  cancellation on remove/abort-all/replace/orphan, adapted to Go `context`) wired but
+  `t.Skip`'d until bodies land (suite stays green). Datasheet refreshed to the current
+  source (the `.expect("registry lock poisoned")` locks, the new
+  `set_media_task` orphan-abort `None => handle.abort()` behavior, and the four added
+  cancellation tests) and **pinned** (it had no pin). MODULES.md: #28 -> scaffolded.
+  **Paused for human direction** on the `tokio::AbortHandle` → Go mapping (scaffolded
+  against `context.CancelFunc`) before implementing.
+
 ### session — module #27 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - New root package `meowcaller` porting `src/voip/session.rs`: the `CallSession`
   phase state machine (validated transitions — `Ended` sink, `Idle→Calling` only when

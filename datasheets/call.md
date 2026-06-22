@@ -6,14 +6,17 @@ a connection teardown can stop every in-flight call. Signaling layer (call contr
 and lifecycle ownership).
 
 **Validation vector:** (integration — no single vector). Behavior is pinned by the
-inline `tests` module below: insert/duplicate/transition/remove bookkeeping and an
-async test that `abort_all` cancels every registered media task. There is no
-byte-level vector for orchestration; if one is later extracted, copy it verbatim
-into `meowcaller/testdata/`.
+inline `tests` module below: insert/duplicate/transition/remove bookkeeping plus
+tests that `remove`, `abort_all`, a replacing `set_media_task`, and a
+`set_media_task` on an already-removed call each actually cancel the media task.
+There is no byte-level vector for orchestration.
+
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust
+`src/voip/registry.rs` + `src/voip/mod.rs` — main crate `src/`, not `wacore/src/`).
 
 ## Reference source (verbatim — authoritative)
 
-### `mod.rs` (module composition)
+### `mod.rs` (module composition — no logic to port)
 
 ```rust
 //! VoIP calls media plane (Tokio runtime side): the DTLS/SCTP DataChannel transport
@@ -30,9 +33,9 @@ pub mod transport;
 
 ```rust
 //! Per-call registry: tracks active [`CallSession`]s and their media-task abort handles so a
-//! connection teardown can stop every in-flight call. The review flagged that
-//! `cleanup_connection_state` had no voip hook, so the media loop could outlive the XMPP
-//! socket across a reconnect; `abort_all` is that hook.
+//! connection teardown can stop every in-flight call. [`CallRegistry::abort_all`] is the teardown
+//! primitive, but it is NOT yet wired into `Client::cleanup_connection_state`; the integrator
+//! owns a `CallRegistry` and must call `abort_all` from their own disconnect/reconnect path.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -59,7 +62,7 @@ impl CallRegistry {
 
     /// Register a new call. Returns false if a call with this id already exists.
     pub fn insert(&self, session: CallSession) -> bool {
-        let mut map = self.inner.lock().unwrap();
+        let mut map = self.inner.lock().expect("registry lock poisoned");
         if map.contains_key(&session.call_id) {
             return false;
         }
@@ -73,19 +76,28 @@ impl CallRegistry {
         true
     }
 
-    /// Attach (or replace) the media task's abort handle for a call.
+    /// Attach (or replace) the media task's abort handle for a call. If the call was already
+    /// removed, the handle is aborted immediately so its task can't outlive the call.
     pub fn set_media_task(&self, call_id: &str, handle: AbortHandle) {
-        if let Some(entry) = self.inner.lock().unwrap().get_mut(call_id)
-            && let Some(old) = entry.media_task.replace(handle)
+        match self
+            .inner
+            .lock()
+            .expect("registry lock poisoned")
+            .get_mut(call_id)
         {
-            old.abort();
+            Some(entry) => {
+                if let Some(old) = entry.media_task.replace(handle) {
+                    old.abort();
+                }
+            }
+            None => handle.abort(),
         }
     }
 
     pub fn phase(&self, call_id: &str) -> Option<CallPhase> {
         self.inner
             .lock()
-            .unwrap()
+            .expect("registry lock poisoned")
             .get(call_id)
             .map(|e| e.session.phase())
     }
@@ -94,7 +106,7 @@ impl CallRegistry {
     pub fn transition(&self, call_id: &str, next: CallPhase) -> bool {
         self.inner
             .lock()
-            .unwrap()
+            .expect("registry lock poisoned")
             .get_mut(call_id)
             .is_some_and(|e| e.session.transition_to(next))
     }
@@ -103,18 +115,23 @@ impl CallRegistry {
     pub fn snapshot(&self, call_id: &str) -> Option<CallSession> {
         self.inner
             .lock()
-            .unwrap()
+            .expect("registry lock poisoned")
             .get(call_id)
             .map(|e| e.session.clone())
     }
 
     pub fn active_count(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.lock().expect("registry lock poisoned").len()
     }
 
     /// Remove a call, aborting its media task. Returns true if it existed.
     pub fn remove(&self, call_id: &str) -> bool {
-        match self.inner.lock().unwrap().remove(call_id) {
+        match self
+            .inner
+            .lock()
+            .expect("registry lock poisoned")
+            .remove(call_id)
+        {
             Some(entry) => {
                 if let Some(task) = entry.media_task {
                     task.abort();
@@ -126,9 +143,9 @@ impl CallRegistry {
     }
 
     /// Abort every call's media task and clear the registry. Returns the number cleared.
-    /// Call this from `cleanup_connection_state` on disconnect/reconnect.
+    /// Call this from your own disconnect/reconnect teardown; it is not wired into the Client.
     pub fn abort_all(&self) -> usize {
-        let mut map = self.inner.lock().unwrap();
+        let mut map = self.inner.lock().expect("registry lock poisoned");
         for entry in map.values() {
             if let Some(task) = &entry.media_task {
                 task.abort();
@@ -184,6 +201,70 @@ mod tests {
         assert_eq!(reg.abort_all(), 2);
         assert_eq!(reg.active_count(), 0);
     }
+
+    /// Spawn a never-ending task; awaiting its `JoinHandle` blocks forever unless the stored
+    /// `AbortHandle` actually cancels it. Awaiting then yields a cancelled `JoinError`, proving the
+    /// handle is live (not a detached/orphaned copy).
+    fn forever() -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async {
+            std::future::pending::<()>().await;
+        })
+    }
+
+    #[tokio::test]
+    async fn remove_actually_cancels_media_task() {
+        let reg = CallRegistry::new();
+        reg.insert(session("A"));
+        let handle = forever();
+        reg.set_media_task("A", handle.abort_handle());
+        assert!(reg.remove("A"));
+        let err = handle.await.expect_err("removed task must be cancelled");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn abort_all_actually_cancels_media_tasks() {
+        let reg = CallRegistry::new();
+        reg.insert(session("A"));
+        let handle = forever();
+        reg.set_media_task("A", handle.abort_handle());
+        assert_eq!(reg.abort_all(), 1);
+        let err = handle.await.expect_err("abort_all must cancel the task");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn replace_cancels_the_old_media_task() {
+        let reg = CallRegistry::new();
+        reg.insert(session("A"));
+        let old = forever();
+        reg.set_media_task("A", old.abort_handle());
+        // Replacing the handle for a live call must abort the old one.
+        let new = forever();
+        reg.set_media_task("A", new.abort_handle());
+        let err = old.await.expect_err("replaced task must be cancelled");
+        assert!(err.is_cancelled());
+        assert!(!new.is_finished(), "the replacement task stays live");
+        // Cleanup: removing the call cancels the replacement too.
+        reg.remove("A");
+        assert!(
+            new.await
+                .expect_err("replacement cancelled on remove")
+                .is_cancelled()
+        );
+    }
+
+    /// Attaching a media task to an already-removed call must abort the handle immediately so
+    /// the task can't outlive the call.
+    #[tokio::test]
+    async fn set_media_task_on_unknown_call_aborts_immediately() {
+        let reg = CallRegistry::new();
+        let handle = forever();
+        // No call with id "GONE" was ever inserted.
+        reg.set_media_task("GONE", handle.abort_handle());
+        let err = handle.await.expect_err("orphan task must be cancelled");
+        assert!(err.is_cancelled());
+    }
 }
 ```
 
@@ -195,7 +276,7 @@ package meowcaller
 // CallRegistry is a thread-safe map of active calls keyed by call-id, each
 // optionally holding the cancel handle for its running media task.
 type CallRegistry struct {
-	// unexported: mutex + map[string]*callEntry
+	// unexported: sync.Mutex + map[string]*callEntry
 }
 
 func NewCallRegistry() *CallRegistry
@@ -203,8 +284,9 @@ func NewCallRegistry() *CallRegistry
 // Insert registers a new call; returns false if the id already exists.
 func (r *CallRegistry) Insert(session *CallSession) bool
 
-// SetMediaTask attaches (or replaces, cancelling the old) the media task's
-// cancel handle for a call.
+// SetMediaTask attaches (or replaces, cancelling the old) the media task's cancel
+// handle for a call. If the call is unknown (e.g. already removed), the handle is
+// cancelled immediately so its task can't outlive the call.
 func (r *CallRegistry) SetMediaTask(callID string, cancel context.CancelFunc)
 
 // Phase returns the call's current phase, and whether the call is known.
@@ -238,24 +320,29 @@ func (r *CallRegistry) AbortAll() int
   `tokio::task::AbortHandle`; the idiomatic Go equivalent is a `context.CancelFunc`
   (or a stop channel) captured when the media goroutine is spawned. The envelope
   assumes `context.CancelFunc` — confirm against however the media loop is actually
-  launched, and remember the Go context must be `import`ed.
-- `TODO(human):` `set_media_task` cancels the *previous* handle when replacing it
-  (the `.replace(...)` then `old.abort()` step). Preserve that replace-and-cancel
-  behavior or a superseded media goroutine leaks.
+  launched, and remember the Go `context` must be `import`ed. A `CancelFunc` is a
+  no-op-safe "request stop"; it does not *wait* for the goroutine, so the Go tests
+  must observe cancellation via a done-channel/`ctx.Done()`, not by "joining".
+- `TODO(human):` `set_media_task` has TWO cancel behaviors to preserve: (1) replacing
+  a live call's handle cancels the *previous* one (`replace` then `old.abort()`); and
+  (2) attaching to an *unknown/removed* call cancels the incoming handle immediately
+  (`None => handle.abort()`) so an orphan task can't outlive the call. Both are pinned
+  (`replace_cancels_the_old_media_task`, `set_media_task_on_unknown_call_aborts_immediately`).
 - Concurrency: the Rust wraps the whole map in a single `Mutex`; every method takes
   the lock for its critical section. Mirror with a `sync.Mutex` guarding the map;
   do not hold the lock across the cancel call if cancellation can block (the Rust
-  `abort` is non-blocking — verify the Go cancel is too, or release first).
-- `abort_all` exists specifically as the teardown hook: it must cancel every media
-  task and empty the map so a reconnect cannot leave a media loop outliving the
-  connection. The `abort_all_stops_media_tasks` test pins that the count returned
-  equals the number cancelled and the registry ends empty.
-- `TODO(human):` `mod.rs` only declares the sibling modules (`audio`, `registry`,
-  `session`, `transport`); there is no logic to port from it. The real call-control
-  flow (dispatching server signaling into `transition`, spawning the media task and
-  registering its handle, calling `abort_all` from connection cleanup) is not in
-  these files and is the human's to wire — this datasheet pins only the registry
-  contract those wires must use.
+  `abort` is non-blocking — a Go `context.CancelFunc` is also non-blocking, so calling
+  it under the lock is acceptable, but releasing first is cleaner).
+- `abort_all` is the teardown hook: it must cancel every media task and empty the map
+  so a reconnect cannot leave a media loop outliving the connection. The reference
+  notes it is NOT auto-wired into the client — the integrator calls it from their own
+  disconnect/reconnect path.
+- `TODO(human):` `mod.rs` only declares the sibling modules; there is no logic to
+  port. The real call-control flow (dispatching server signaling into `transition`,
+  spawning the media goroutine and registering its cancel, calling `abort_all` from
+  connection cleanup) is not in these files and is the human's to wire — this
+  datasheet pins only the registry contract those wires must use.
 - This is an orchestration module: apart from the registry's pinned bookkeeping, it
   is decision-heavy glue with no byte-level vector. Treat the surrounding wiring as
   unproven until validated end-to-end against a live call.
+```
