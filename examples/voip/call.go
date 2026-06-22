@@ -12,6 +12,7 @@ import (
 
 	"github.com/purpshell/meowcaller/signaling"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -53,10 +54,24 @@ func connectClient(ctx context.Context) (*whatsmeow.Client, error) {
 	}
 	// Connect()/QR pairing return before the socket handshake is done; wait briefly on
 	// this first connect until it's ready before issuing any usync/call traffic.
-	if !client.WaitForConnection(5 * time.Second) {
+	if !client.WaitForConnection(50 * time.Second) {
 		return nil, errors.New("timed out waiting for whatsmeow connection")
 	}
 	log.Printf("connected as %s", client.Store.GetLID())
+
+	// Sync the critical app-state (push name / settings) so usync, privacy tokens and
+	// contacts behave; tolerate a sync failure rather than abort the session.
+	if err := client.FetchAppState(ctx, appstate.WAPatchCriticalBlock, false, true); err != nil {
+		log.Printf("app-state sync (critical_block): %v — continuing", err)
+	}
+	// A device with no push name can't send presence; give it one, then announce
+	// availability so the server delivers call signaling to us.
+	if client.Store.PushName == "" {
+		client.Store.PushName = "meowcaller"
+	}
+	if err := client.SendPresence(ctx, types.PresenceAvailable); err != nil {
+		log.Printf("send presence: %v — continuing", err)
+	}
 	return client, nil
 }
 
@@ -72,18 +87,23 @@ func resolvePeerLID(ctx context.Context, cli *whatsmeow.Client, target string) (
 	if jid.Server == types.HiddenUserServer {
 		return jid, nil // already a LID
 	}
-	lid, err := cli.Store.LIDs.GetLIDForPN(ctx, jid)
-	if err == nil && !lid.IsEmpty() {
+	if lid, err := cli.Store.LIDs.GetLIDForPN(ctx, jid); err == nil && !lid.IsEmpty() {
 		return lid, nil
 	}
-	if _, err := cli.IsOnWhatsApp(ctx, []string{"+" + jid.User}); err != nil {
+	// usync: GetUserInfo issues the lid-bearing query and persists the PN→LID mapping.
+	info, err := cli.GetUserInfo(ctx, []types.JID{jid})
+	if err != nil {
 		return types.EmptyJID, fmt.Errorf("usync %s: %w", jid.User, err)
 	}
-	lid, err = cli.Store.LIDs.GetLIDForPN(ctx, jid)
-	if err != nil || lid.IsEmpty() {
-		return types.EmptyJID, fmt.Errorf("no LID mapping for %s", jid)
+	for _, ui := range info {
+		if !ui.LID.IsEmpty() {
+			return ui.LID, nil
+		}
 	}
-	return lid, nil
+	if lid, err := cli.Store.LIDs.GetLIDForPN(ctx, jid); err == nil && !lid.IsEmpty() {
+		return lid, nil
+	}
+	return types.EmptyJID, fmt.Errorf("usync returned no LID for %s (peer unreachable or not on WhatsApp)", jid.User)
 }
 
 // callKeyPlaintext wraps the raw callKey as the Signal message body
@@ -154,13 +174,24 @@ func runCall(ctx context.Context, target string) error {
 		deviceKeys = append(deviceKeys, signaling.OfferDeviceKey{DeviceJid: dev, Ciphertext: ct, EncType: encType})
 	}
 
+	// Include the peer's privacy token when we have one (the server requires it to
+	// place a call to contacts with privacy enabled; it arrives via receipts/notifs).
+	var privacyToken []byte
+	if pt, err := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, peerLID); err == nil && pt != nil {
+		privacyToken = pt.Token
+		log.Printf("attaching privacy token (%d bytes) for %s", len(privacyToken), peerLID)
+	} else {
+		log.Printf("no privacy token for %s — the offer may be rejected if the peer requires one", peerLID)
+	}
+
 	callID := newCallID()
 	offer := signaling.BuildOffer(&signaling.OfferParams{
-		CallID:      callID,
-		To:          peerLID,
-		CallCreator: self,
-		DeviceKeys:  deviceKeys,
-		Capability:  signaling.CapabilityOffer,
+		CallID:       callID,
+		To:           peerLID,
+		CallCreator:  self,
+		DeviceKeys:   deviceKeys,
+		PrivacyToken: privacyToken,
+		Capability:   signaling.CapabilityOffer,
 	})
 	if err := cli.DangerousInternals().SendNode(ctx, offer); err != nil {
 		return fmt.Errorf("send offer: %w", err)
@@ -220,7 +251,9 @@ func acceptCall(ctx context.Context, cli *whatsmeow.Client, e *events.CallOffer)
 	if err := cli.DangerousInternals().SendNode(ctx, accept); err != nil {
 		return fmt.Errorf("send accept: %w", err)
 	}
-	log.Printf("✅ accepted call %s. (Media: derive the pipeline from this callKey and connect the relay — the loopback-proven path.)", e.CallID)
+	log.Printf("✅ accepted call %s with callKey. NOTE: the caller will send <terminate reason=\"setup_failed\"> ~seconds later "+
+		"unless we bring up relay media — connect the relay endpoint from the offer, STUN-allocate, and run the "+
+		"loopback-proven MediaPipeline. That live hop (relay.ConnectRelayMedia, NOT VALIDATED) is the remaining work.", e.CallID)
 	return nil
 }
 
