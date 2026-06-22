@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"errors"
-	"strings"
 
 	"github.com/purpshell/meowcaller/util"
 )
@@ -22,28 +21,10 @@ const (
 	aesKeyLen         = 16
 )
 
-// formatParticipantID is the device-qualified participant id: strip the resource,
-// give a bare @lid an implicit :0, pass everything else through unchanged.
-func formatParticipantID(jid string) string {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/mod.rs#L44-L58
-	bare, _, _ := strings.Cut(jid, "/")
-	bare = strings.TrimSpace(bare)
-	at := strings.LastIndexByte(bare, '@')
-	if at <= 0 {
-		return bare
-	}
-	user := bare[:at]
-	domain := bare[at+1:]
-	if domain == "lid" && !strings.Contains(user, ":") {
-		return user + ":0@" + domain
-	}
-	return bare
-}
-
 // FormatSframeParticipantID formats the participant id used as the SFrame HKDF info.
 func FormatSframeParticipantID(jid string) string {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/sframe.rs#L33-L35
-	return formatParticipantID(jid)
+	return util.FormatParticipantID(jid)
 }
 
 // SframeInfoLabel builds the HKDF info label "e2e sframe key<participantID>".
