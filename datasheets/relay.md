@@ -11,20 +11,23 @@ in the `tests` module below. The connection path (`connect_relay_media`) talks t
 live relay and has no recorded vector. If a classifier vector file is later
 extracted, copy it verbatim into `relay/testdata/`.
 
-**Reference pinned at:** _UNMAPPED — the embedded `transport.rs` (UDP/DTLS/SCTP/webrtc-rs
-media transport) is **not present** in whatsapp-rust @ `41095d4e6ba4610e054e9ede3af1d5e88a83faee`;
-the only relay source there is `relay_parse.rs` (the `<relay>` ack-block parser, a
-different layer). This datasheet needs human re-sourcing before module #26 is built._
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (whatsapp-rust
+`src/voip/transport.rs` — note the **main crate** `src/`, not `wacore/src/`; the
+earlier `wacore/`-only search mis-flagged this UNMAPPED). Only `classify_relay_packet`
+is pure/unit-testable (pinned by the inline `tests` below); the connection path
+(`connect_relay_media`) binds a webrtc-rs DTLS/SCTP/DataChannel stack and has **no
+vector** — it requires a human decision on the Go transport library and the
+dependency policy before it can be built.
 
 ## Reference source (verbatim — authoritative)
 
 ```rust
 //! Relay media transport: a pre-negotiated WebRTC DataChannel over SCTP-over-DTLS-over-UDP
-//! to a single WhatsApp relay endpoint. The synthetic-SDP / wrtc dance the TS client does
-//! reduces, at this layer, to: connect a UDP socket to the relay, DTLS-handshake as the
-//! client (self-signed cert, server-cert verification skipped — SRTP keys come from
-//! callKey/hbh_key, not DTLS), run an SCTP association over it, and open the pre-negotiated
-//! id=0 DataChannel that carries STUN/RTP/RTCP as binary messages.
+//! to a single WhatsApp relay endpoint. The synthetic-SDP / wrtc dance reduces, at this layer,
+//! to: connect a UDP socket to the relay, DTLS-handshake as the client (self-signed cert,
+//! server-cert verification skipped, since SRTP keys come from callKey/hbh_key, not DTLS),
+//! run an SCTP association over it, and open the pre-negotiated id=0 DataChannel that carries
+//! STUN/RTP/RTCP as binary messages.
 //!
 //! NOTE: live validation against a real relay is deferred (see docs/voip/PORT_PLAN.md). This
 //! wires the webrtc-rs stack and compiles; `connect_relay_media` is not exercised in CI.
@@ -48,6 +51,22 @@ const DATA_CHANNEL_LABEL: &str = "pre-negotiated";
 /// SCTP-over-DTLS WebRTC port.
 const SCTP_PORT: u16 = 5000;
 
+/// Errors a relay-transport consumer can branch on: a `Connect` failure is fatal (the call can't
+/// reach the relay), while `Send`/`RecvClosed` are recoverable conditions on an established channel.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CallTransportError {
+    /// The media stack failed to connect to the relay (UDP/DTLS/SCTP/DataChannel setup). Fatal.
+    #[error("relay connect failed: {0}")]
+    Connect(#[source] anyhow::Error),
+    /// Writing a packet to the open DataChannel failed. Recoverable (retry / drop the frame).
+    #[error("relay datachannel write failed")]
+    Send(#[source] webrtc_data::Error),
+    /// Reading from the DataChannel failed; the peer/relay likely closed it.
+    #[error("relay datachannel read failed")]
+    RecvClosed(#[source] webrtc_data::Error),
+}
+
 /// Classification of a packet seen on the relay channel, by its first byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelayPacketKind {
@@ -57,8 +76,8 @@ pub enum RelayPacketKind {
     Other,
 }
 
-/// First-byte demux (matches zapo-caller transport.ts classifyRelayPacket): top two bits
-/// zero ⇒ STUN; 0x80/0x81 ⇒ RTCP; 0x90 ⇒ RTP (WARP); anything else ⇒ other.
+/// First-byte demux: top two bits zero means STUN; 0x80/0x81 means RTCP; 0x90 means RTP
+/// (WARP); anything else is other.
 pub fn classify_relay_packet(data: &[u8]) -> RelayPacketKind {
     if data.len() < 2 {
         return RelayPacketKind::Other;
@@ -121,24 +140,34 @@ pub struct RelayMediaChannel {
 
 impl RelayMediaChannel {
     /// Send one media/STUN packet as a binary DataChannel message.
-    pub async fn send(&self, data: &[u8]) -> Result<usize> {
+    pub async fn send(&self, data: &[u8]) -> Result<usize, CallTransportError> {
         self.dc
             .write(&Bytes::copy_from_slice(data))
             .await
-            .map_err(|e| anyhow!("datachannel write: {e}"))
+            .map_err(CallTransportError::Send)
     }
 
     /// Receive one DataChannel message into `buf`, returning its length.
-    pub async fn recv(&self, buf: &mut [u8]) -> Result<usize> {
+    pub async fn recv(&self, buf: &mut [u8]) -> Result<usize, CallTransportError> {
         self.dc
             .read(buf)
             .await
-            .map_err(|e| anyhow!("datachannel read: {e}"))
+            .map_err(CallTransportError::RecvClosed)
     }
 }
 
 /// Connect the full media stack to one relay endpoint. Deferred for live validation.
-pub async fn connect_relay_media(relay_addr: SocketAddr) -> Result<RelayMediaChannel> {
+pub async fn connect_relay_media(
+    relay_addr: SocketAddr,
+) -> Result<RelayMediaChannel, CallTransportError> {
+    connect_relay_media_inner(relay_addr)
+        .await
+        .map_err(CallTransportError::Connect)
+}
+
+/// The multi-step setup, kept on `anyhow` for per-step `.context()`; the public boundary wraps the
+/// aggregate into [`CallTransportError::Connect`].
+async fn connect_relay_media_inner(relay_addr: SocketAddr) -> Result<RelayMediaChannel> {
     // 1. UDP socket connected to the relay.
     let udp = UdpSocket::bind("0.0.0.0:0").await.context("bind udp")?;
     udp.connect(relay_addr)
@@ -248,12 +277,17 @@ func ConnectRelayMedia(relayAddr *net.UDPAddr) (*RelayMediaChannel, error)
   unit-tested without a network.
 - `u16` port → Go `uint16` (or untyped const). Lengths are `usize` → Go `int`. The
   byte mask `0xc0` and the exact-match arms must stay exact.
+- The reference now models transport failures with a typed `CallTransportError`
+  (Connect = fatal, Send/RecvClosed = recoverable on an open channel). A Go port can
+  mirror that with a small error type or sentinel errors; the public methods return
+  `(int, error)` / `(*RelayMediaChannel, error)`.
 - The whole connection path is a binding to a specific WebRTC stack
   (UDP→DTLS→SCTP→DataChannel) with hardcoded knobs: `insecure_skip_verify`,
   self-signed cert CN `"wa-voip"`, both SCTP ports `5000`, DataChannel `id=0`,
   `negotiated=true`, label `"pre-negotiated"`. `TODO(human):` pick the Go WebRTC
-  stack (e.g. pion/webrtc, pion/dtls, pion/sctp, pion/datachannel) and decide
-  whether to drive the sub-layers directly as here or via a higher-level API.
+  stack (e.g. pion/dtls, pion/sctp, pion/datachannel) and decide whether to drive
+  the sub-layers directly as here or via a higher-level API — **and** whether the
+  project's protobuf-only dependency policy admits these libraries.
 - `TODO(human):` the cross-version `Conn` bridge (`DtlsToSctpConn`) exists only
   because two Rust crate versions expose the same trait twice. A Go port likely
   has one `net.Conn`-shaped interface and will not need this adapter — confirm the
