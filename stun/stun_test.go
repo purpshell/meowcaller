@@ -64,8 +64,6 @@ func tx12(t *testing.T, k stunKat) [12]byte {
 
 // TestCrc32IsIEEE checks the FINGERPRINT CRC-32 against the kat and the IEEE constant.
 func TestCrc32IsIEEE(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	if got := stunFingerprint([]byte("abc")); uint32(got) != k.Stun.Crc32Abc {
 		t.Errorf("crc32(abc) = %#x, want %#x", got, k.Stun.Crc32Abc)
@@ -78,8 +76,6 @@ func TestCrc32IsIEEE(t *testing.T) {
 // TestAttrAndEndpointMatchKAT checks attribute encoding, the XOR endpoint, and the
 // native sender subscription.
 func TestAttrAndEndpointMatchKAT(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	token := mustHex(t, k.Stun.RelayToken)
 	if got := hex.EncodeToString(stunAttr(attrRelayToken, token)); got != k.Stun.AttrToken {
@@ -100,8 +96,6 @@ func TestAttrAndEndpointMatchKAT(t *testing.T) {
 
 // TestEncodeRequestMIAndFingerprint checks the MI-only and MI+FINGERPRINT encodings.
 func TestEncodeRequestMIAndFingerprint(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	tx := tx12(t, k)
 	attrs := stunAttr(attrRelayToken, mustHex(t, k.Stun.RelayToken))
@@ -119,8 +113,6 @@ func TestEncodeRequestMIAndFingerprint(t *testing.T) {
 
 // TestWasmAllocateAndPing checks the WASM allocate request and the ping.
 func TestWasmAllocateAndPing(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	tx := tx12(t, k)
 	token := mustHex(t, k.Stun.RelayToken)
@@ -141,8 +133,6 @@ func TestWasmAllocateAndPing(t *testing.T) {
 
 // TestParseRoundTripsAttributes parses the minimal MI request back into attributes.
 func TestParseRoundTripsAttributes(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	minimal := mustHex(t, k.Stun.MinimalMi)
 	if !IsStunPacket(minimal) {
@@ -168,8 +158,6 @@ func TestParseRoundTripsAttributes(t *testing.T) {
 
 // TestProtobufPayloadsMatchKAT checks the three protobuf subscription/descriptor blobs.
 func TestProtobufPayloadsMatchKAT(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	ssrc := k.Inputs.SSRC
 	if got := hex.EncodeToString(CreateVoipSenderSubscriptions(ssrc)); got != k.StunProto.VoipSenderSubscriptions {
@@ -189,8 +177,6 @@ func TestProtobufPayloadsMatchKAT(t *testing.T) {
 
 // TestAndroidAllocateCarriesThreeAttrs checks the APK allocate carries the four attrs.
 func TestAndroidAllocateCarriesThreeAttrs(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	tx := tx12(t, k)
 	token := mustHex(t, k.Stun.RelayToken)
@@ -214,8 +200,6 @@ func TestAndroidAllocateCarriesThreeAttrs(t *testing.T) {
 
 // TestPongMatching checks pong classification with and without a transaction id.
 func TestPongMatching(t *testing.T) {
-	t.Skip("blocked: stun bodies are stubs; enable when implemented")
-
 	k := loadStunKat(t)
 	tx := tx12(t, k)
 	pong := BuildWhatsappPing(tx)

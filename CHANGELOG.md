@@ -7,6 +7,25 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### stun — module #21 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- New `stun` package: the RFC 5389 TLV encoder (`EncodeStunRequest` with HMAC-SHA1
+  MESSAGE-INTEGRITY + CRC-32 FINGERPRINT), the WASM/APK allocate builders
+  (`BuildWasmStunAllocateRequest`/`BuildAndroidStunAllocateRequest`), the WhatsApp
+  ping, the response classifiers/parsers (`IsStunPacket`, `StunMessageType`,
+  `ParseStunAttributes`, `ParseStunErrorCode`, pong matching, ...), and the minimal
+  protobuf subscription/descriptor encoders (`CreateVoip/ApkSenderSubscriptions`,
+  `CreateApkStreamDescriptors`). Implemented over stdlib `crypto/hmac`+`crypto/sha1`,
+  `hash/crc32.ChecksumIEEE` (same reflected IEEE poly as the verbatim bitwise loop),
+  and `encoding/binary` varints — no new deps. `Option` returns map to Go
+  `(val, bool)` classifications (no panics; `hmac.New` is infallible). KAT
+  (`kats.json` stun + stun_proto sections, synthetic tx/keys — no PII) passes
+  byte-exact across all eight cases: CRC-32, attr/endpoint/native-sub, MI-only and
+  MI+FINGERPRINT requests, WASM allocate + ping, attribute parse round-trip, the
+  three protobuf blobs, APK allocate attrs, and pong matching. CodeRabbit: clean.
+  Datasheet envelope refreshed (dropped the removed
+  `build_native`/`build_minimal`/`rust_stun_allocate_request`; `Option`-shaped
+  returns). **KAT-verified.**
+
 ### srtp/sframe — module #20 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - `srtp` package gains SFrame E2E media encryption: per-participant key derivation
   (`FormatSframeParticipantID`/`SframeInfoLabel`/`DeriveE2eSframeKeyForParticipant`),

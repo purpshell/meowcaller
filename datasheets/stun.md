@@ -555,17 +555,13 @@ func EncodeXorRelayEndpoint(ipv4 string, port uint16) ([6]byte, bool)
 
 func BuildWasmStunAllocateRequest(transactionID [12]byte, relayToken []byte, endpointXor [6]byte, integrityKey []byte) []byte
 
-func BuildNativeStunAllocateRequest(transactionID [12]byte, relayToken []byte, ssrc uint32, integrityKey []byte, includeSubscription, includeFingerprint bool) []byte
-
-func BuildMinimalStunAllocateRequest(transactionID [12]byte, relayToken []byte, integrityKey []byte, includeFingerprint bool) []byte
-
 func BuildWhatsappPing(transactionID [12]byte) [20]byte
 
 func IsStunPacket(data []byte) bool
 
-func StunMessageType(data []byte) uint16
+func StunMessageType(data []byte) (uint16, bool)
 
-func StunTransactionID(data []byte) []byte
+func StunTransactionID(data []byte) ([]byte, bool)
 
 func IsAllocateOrBindingSuccess(data []byte) bool
 
@@ -589,9 +585,15 @@ func CreateApkSenderSubscriptions(ssrc uint32, pid *uint32) []byte
 func CreateApkStreamDescriptors(ssrc uint32) []byte
 
 func BuildAndroidStunAllocateRequest(transactionID [12]byte, relayToken []byte, ssrc uint32, pid *uint32, integrityKey []byte, includeFingerprint bool) []byte
-
-func BuildRustStunAllocateRequest(transactionID [12]byte, username, senderSubscriptions, integrityKey []byte, includeFingerprint bool) []byte
 ```
+
+The `Option<u16>`/`Option<&[u8]>`/`Option<[u8;6]>` returns map to Go `(val, bool)`
+classifications (not errors — these are "not that kind of packet", and `hmac.New` is
+infallible so nothing panics). The reference removed `build_native`/`build_minimal`/
+`rust_stun_allocate_request` and `stun_message_type` became `Option<u16>` — the
+envelope is updated to match. The FINGERPRINT CRC-32 is stdlib
+`hash/crc32.ChecksumIEEE` (same reflected IEEE poly), and the protobuf varints are
+stdlib `binary.AppendUvarint`.
 
 ## Implementation suggestions (guidance, not authoritative)
 

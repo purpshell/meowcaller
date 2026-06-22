@@ -39,7 +39,7 @@ confirmed when the module is reached.
 | 18 | e2e_srtp | `srtp` | hkdf | srtp-e2e.md | `e2e_srtp.rs` | `kats.json` | verified |
 | 19 | hbh_srtp | `srtp` | hkdf | srtp-hbh.md | `hbh_srtp.rs` | `kats.json` | verified |
 | 20 | sframe | `srtp` | hkdf | srtp-sframe.md | `sframe.rs` | `kats.json` | verified (sframe core; DeriveWarpAuthKey scaffolded for #24) |
-| 21 | stun | `stun` | — | stun.md | `stun.rs` | inline | planned |
+| 21 | stun | `stun` | — | stun.md | `stun.rs` | `kats.json` | verified |
 | 22 | rtp | `rtp` | — | rtp.md | `rtp.rs`, `rtcp.rs` | inline | planned |
 | 23 | ssrc | `rtp` | rtp | rtp-ssrc.md | `ssrc.rs` | inline | planned |
 | 24 | warp | `srtp` | stun, e2e_srtp, hbh_srtp | srtp-warp.md | `warp.rs` | inline | planned |
