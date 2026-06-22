@@ -251,6 +251,9 @@ func runCall(ctx context.Context, target string) error {
 		PrivacyToken: privacyToken,
 		Capability:   signaling.CapabilityOffer,
 	})
+	// The builder leaves the <call> stanza id to the I/O layer. Without a stanza id
+	// the server can't route/ack the offer, so it never reaches the callee.
+	offer.Attrs["id"] = cli.GenerateMessageID()
 	// Pre-seed the media coordinator with our generated callKey, then bring up media
 	// when the relay endpoint arrives (relaylatency/transport) after the peer accepts.
 	coord := newCoordinator(ctx, cli, store)
@@ -358,6 +361,8 @@ func (c *coordinator) onOffer(e *events.CallOffer) {
 		CallID: e.CallID, To: e.From, CallCreator: e.CallCreator,
 		AudioRates: rates, Capability: signaling.CapabilityOffer,
 	})
+	// Like the offer, the <call> stanza id is supplied by the I/O layer.
+	accept.Attrs["id"] = c.cli.GenerateMessageID()
 	if err := c.cli.DangerousInternals().SendNode(c.ctx, accept); err != nil {
 		log.Printf("send accept: %v", err)
 		return
