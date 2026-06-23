@@ -306,8 +306,11 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		}
 	}()
 
-	// Receive: DataChannel → classify → unprotect → decode → speaker.
+	// Receive: DataChannel → classify. RTP → unprotect → decode → speaker. A non-RTP
+	// STUN binding request gets a binding-success reply (ICE consent freshness, RFC
+	// 7675); without it the relay drops the binding and the peer's call fails.
 	buf := make([]byte, 1500)
+	var rtpIn, consent uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -316,13 +319,30 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		if err != nil {
 			return fmt.Errorf("relay recv: %w", err)
 		}
-		if relay.ClassifyRelayPacket(buf[:n]) != relay.RelayPacketRtp {
-			continue // STUN/RTCP/consent — ignored by this demo
+		pkt := buf[:n]
+		if relay.ClassifyRelayPacket(pkt) != relay.RelayPacketRtp {
+			if mt, ok := stun.StunMessageType(pkt); ok && mt == stun.MsgBindingRequest {
+				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
+					var tx [12]byte
+					copy(tx[:], txid)
+					resp := stun.EncodeStunRequest(stun.MsgBindingSuccess, tx, nil, rd.relayKeyASCII, true)
+					if _, err := ch.Send(resp); err != nil {
+						return fmt.Errorf("relay send binding-success: %w", err)
+					}
+					if consent++; consent == 1 {
+						log.Printf("🤝 relay consent: answering STUN binding requests (keeps the media path alive)")
+					}
+				}
+			}
+			continue
 		}
-		_, payload, ok := rxPipe.UnprotectAudio(buf[:n])
+		_, payload, ok := rxPipe.UnprotectAudio(pkt)
 		if !ok {
 			continue
 		}
 		speaker <- floatToPCM(dec.Decode(payload))
+		if rtpIn++; rtpIn == 1 {
+			log.Printf("🔊 first RTP from relay — inbound media flowing")
+		}
 	}
 }
