@@ -7,6 +7,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### examples/cli — --diagdump <dir> flag (xmpp + log capture via a logger tee)
+- New developer flag `--diagdump <dir>` (parsed out of `os.Args` before the positional
+  dispatch). When set, the CLI builds a `diag.Recorder`, tees the zerolog stream via
+  `zerolog.MultiLevelWriter(console, diagSplitter)`, and passes
+  `WithDiagnostics(rec)` to `NewClient`. `diagSplitter` json-decodes each event and
+  routes whatsmeow's `wa/Recv`/`wa/Send` stanza dumps (raw XML) to `xmpp.jsonl` and
+  everything else to `log.jsonl`. Forces ≥ debug level so stanzas are captured, and
+  prints a one-line warning that the dir holds raw key/media material. Captures the
+  **xmpp** stream end-to-end; the engine-side exact streams (keying/srtp/rtp/media)
+  follow. CLI build/vet green.
+
 ### diag — developer diagnostics recorder + WithDiagnostics client option
 - New `meowcaller/diag` package: a `Recorder` that writes exact, per-category call
   diagnostics to per-stream JSONL files (`<dir>/<stream>.jsonl`). Stdlib-only,

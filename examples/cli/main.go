@@ -17,8 +17,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +30,7 @@ import (
 
 	meowcaller "github.com/purpshell/meowcaller"
 	"github.com/purpshell/meowcaller/audio/malgo"
+	"github.com/purpshell/meowcaller/diag"
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
@@ -46,11 +49,36 @@ func main() {
 	// packages only accept a logger). A console writer keeps the demo readable; the
 	// logger is embedded in the context so the boilerplate resolves it with
 	// zerolog.Ctx(ctx), and passed to meowcaller via WithLogger.
+	// --diagdump <dir> is a developer flag: pull it (and its value) out of os.Args
+	// before the positional dispatch, then tee the structured log stream into the
+	// diag recorder so the raw wa/Recv|wa/Send stanza XML lands in xmpp.jsonl.
+	diagDir, args := parseDiagDump(os.Args)
+	os.Args = args
+
 	level := zerolog.DebugLevel
 	if lvl, err := zerolog.ParseLevel(os.Getenv("MEOW_LOG_LEVEL")); err == nil && lvl != zerolog.NoLevel {
 		level = lvl
 	}
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.000"}).
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.000"}
+	var rec *diag.Recorder
+	var logWriter io.Writer = consoleWriter
+	if diagDir != "" {
+		var derr error
+		rec, derr = diag.NewRecorder(diagDir)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "diagdump: %v\n", derr)
+			os.Exit(2)
+		}
+		defer rec.Close()
+		// whatsmeow logs each stanza's XML at debug; keep at least debug so the xmpp
+		// stream is populated even if MEOW_LOG_LEVEL asked for something quieter.
+		if level > zerolog.DebugLevel {
+			level = zerolog.DebugLevel
+		}
+		logWriter = zerolog.MultiLevelWriter(consoleWriter, newDiagSplitter(rec))
+		fmt.Fprintf(os.Stderr, "diagdump: writing call diagnostics (incl. raw key/media material) to %s\n", diagDir)
+	}
+	logger := zerolog.New(logWriter).
 		Level(level).
 		With().Timestamp().Logger()
 
@@ -68,20 +96,20 @@ func main() {
 		if len(os.Args) < 3 {
 			usage()
 		}
-		err = runCall(ctx, os.Args[2], "")
+		err = runCall(ctx, rec, os.Args[2], "")
 	case "play":
 		if len(os.Args) < 4 {
 			usage()
 		}
-		err = runCall(ctx, os.Args[2], os.Args[3])
+		err = runCall(ctx, rec, os.Args[2], os.Args[3])
 	case "listen":
-		err = runListen(ctx, false, "")
+		err = runListen(ctx, rec, false, "")
 	case "autoaccept":
 		recordPath := ""
 		if len(os.Args) > 2 {
 			recordPath = os.Args[2]
 		}
-		err = runListen(ctx, true, recordPath)
+		err = runListen(ctx, rec, true, recordPath)
 	default:
 		usage()
 	}
@@ -91,14 +119,60 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: cli <call <target> | play <target> <file.mp3|wav|opus> | listen | autoaccept [record.wav]>")
+	fmt.Fprintln(os.Stderr, "usage: cli [--diagdump <dir>] <call <target> | play <target> <file.mp3|wav|opus> | listen | autoaccept [record.wav]>")
 	os.Exit(2)
+}
+
+// parseDiagDump pulls "--diagdump <dir>" (or "--diagdump=<dir>") out of argv,
+// returning the dir ("" if absent) and argv with the flag removed so the rest of
+// main keeps using os.Args positionally.
+func parseDiagDump(argv []string) (string, []string) {
+	out := make([]string, 0, len(argv))
+	dir := ""
+	for i := 0; i < len(argv); i++ {
+		a := argv[i]
+		switch {
+		case a == "--diagdump":
+			if i+1 < len(argv) {
+				dir = argv[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--diagdump="):
+			dir = strings.TrimPrefix(a, "--diagdump=")
+		default:
+			out = append(out, a)
+		}
+	}
+	return dir, out
+}
+
+// diagSplitter receives each finished zerolog event line (a JSON object) and routes
+// it into the diag Recorder by its "sublogger" field: whatsmeow's wa/Recv and
+// wa/Send stanza dumps (raw XML in the "message" field) go to the xmpp stream,
+// everything else to a general log stream. It is the source of truth for raw wire
+// XML; engine-side semantic diagnostics are emitted separately via the recorder.
+type diagSplitter struct{ rec *diag.Recorder }
+
+func newDiagSplitter(rec *diag.Recorder) *diagSplitter { return &diagSplitter{rec: rec} }
+
+func (d *diagSplitter) Write(p []byte) (int, error) {
+	var ev map[string]any
+	if err := json.Unmarshal(p, &ev); err != nil {
+		// Not JSON (shouldn't happen for a zerolog event); swallow, never break logging.
+		return len(p), nil
+	}
+	stream := "log"
+	if sub, ok := ev["sublogger"].(string); ok && strings.HasPrefix(sub, "wa") {
+		stream = "xmpp"
+	}
+	d.rec.Emit(stream, ev)
+	return len(p), nil
 }
 
 // runCall logs in, places a managed call to target, and attaches audio. With an
 // empty file the local mic is sent and the peer is played to the speaker; with a
 // file path the file is streamed to the peer instead (peer still goes to speaker).
-func runCall(ctx context.Context, target, file string) error {
+func runCall(ctx context.Context, rec *diag.Recorder, target, file string) error {
 	log := zerolog.Ctx(ctx)
 	wa, err := connectClient(ctx)
 	if err != nil {
@@ -106,7 +180,7 @@ func runCall(ctx context.Context, target, file string) error {
 	}
 	defer wa.Disconnect()
 
-	client := meowcaller.NewClient(wa, meowcaller.WithLogger(*zerolog.Ctx(ctx)))
+	client := meowcaller.NewClient(wa, meowcaller.WithLogger(*zerolog.Ctx(ctx)), meowcaller.WithDiagnostics(rec))
 
 	call, err := client.Call(ctx, target)
 	if err != nil {
@@ -137,7 +211,7 @@ func runCall(ctx context.Context, target, file string) error {
 
 // runListen logs in and reports incoming calls. With autoAccept it answers each
 // one and wires mic ↔ speaker, or records the peer's audio to recordPath (.wav).
-func runListen(ctx context.Context, autoAccept bool, recordPath string) error {
+func runListen(ctx context.Context, rec *diag.Recorder, autoAccept bool, recordPath string) error {
 	log := zerolog.Ctx(ctx)
 	wa, err := connectClient(ctx)
 	if err != nil {
@@ -145,7 +219,7 @@ func runListen(ctx context.Context, autoAccept bool, recordPath string) error {
 	}
 	defer wa.Disconnect()
 
-	client := meowcaller.NewClient(wa, meowcaller.WithLogger(*zerolog.Ctx(ctx)))
+	client := meowcaller.NewClient(wa, meowcaller.WithLogger(*zerolog.Ctx(ctx)), meowcaller.WithDiagnostics(rec))
 	client.OnIncomingCall(func(call *meowcaller.Call) {
 		log.Info().Str("call_id", call.ID()).Str("peer", call.Peer().String()).Bool("auto_accept", autoAccept).Msg("incoming call")
 		if !autoAccept {
