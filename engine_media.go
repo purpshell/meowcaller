@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -285,8 +286,48 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	// Receive: DataChannel → classify. RTP → unprotect → decode → sink. A non-RTP STUN
 	// binding request gets a binding-success reply (ICE consent freshness, RFC 7675);
 	// without it the relay drops the binding and the peer's call fails.
+	// Video receive (meowcaller-native): a second WARP pipeline keyed on the video SSRC
+	// (participant slot 2), demuxed off the relay by H.264 payload type 97. NALUs are
+	// reassembled into Annex-B access units and emitted on the RTP marker bit, per WaCalls.
+	//
+	// NOT VALIDATED: no live video-RTP vector; assumes video shares the audio E2E keys and
+	// WARP framing, and that the relay bridges the video SSRC.
+	videoSelfSsrc, err := rtp.DeriveWasmParticipantSsrc(callID, rtp.FormatE2ESrtpParticipantID(selfLID), rtp.VideoSlotWord, log)
+	if err != nil {
+		return err
+	}
+	rxVideoPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, videoSelfSsrc, FrameSamples, WithLogger(log))
+	if err != nil {
+		return err
+	}
+	var videoDepack rtp.H264Depacketizer
+	var videoAU []byte
+
+	// Video send: a second WARP pipeline on our video SSRC, registered on the call so
+	// Call.SendVideoFrame can push encoded H.264 to the relay. Cleared when the loop exits.
+	txVideoPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, videoSelfSsrc, FrameSamples, WithLogger(log))
+	if err != nil {
+		return err
+	}
+	vsender := &videoSender{pipe: txVideoPipe, ch: ch, ssrc: videoSelfSsrc}
+	e.mu.Lock()
+	if m := e.calls[callID]; m != nil {
+		m.videoTx = vsender
+	}
+	e.mu.Unlock()
+	defer func() {
+		vsender.mu.Lock()
+		vsender.ch = nil
+		vsender.mu.Unlock()
+		e.mu.Lock()
+		if m := e.calls[callID]; m != nil {
+			m.videoTx = nil
+		}
+		e.mu.Unlock()
+	}()
+
 	buf := make([]byte, 1500)
-	var rtpIn, rtpSeen, unprotectFail uint64
+	var rtpIn, rtpSeen, unprotectFail, vidIn uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -322,6 +363,34 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		}
 		if rtpSeen++; rtpSeen == 1 {
 			log.Info().Int("bytes", n).Msg("first RTP-classified packet from relay, relay is bridging the peer's media")
+		}
+		// Demux: H.264 (PT 97) is the peer's video; route it to the video pipeline and
+		// reassemble Annex-B access units, emitting each on the RTP marker bit. Anything else
+		// is audio. Ported from WaCalls callmanager_video.handleVideoRelayData.
+		// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L86-L126
+		if vh, vok := rtp.ParseRtpHeader(pkt); vok && vh.PayloadType == rtp.RtpPayloadTypeH264 {
+			_, vpayload, vunok := rxVideoPipe.UnprotectAudio(pkt)
+			if !vunok {
+				e.c.diag.Emit("video", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "seq": vh.SequenceNumber})
+				continue
+			}
+			for _, nalu := range videoDepack.Depacketize(vpayload) {
+				videoAU = append(videoAU, 0x00, 0x00, 0x00, 0x01)
+				videoAU = append(videoAU, nalu...)
+			}
+			if vh.Marker && len(videoAU) > 0 {
+				frame := videoAU
+				videoAU = nil
+				e.c.diag.Emit("video", map[string]any{"event": "frame", "ssrc": vh.Ssrc, "bytes": len(frame)})
+				if sink := callVideoSink(call); sink != nil {
+					_ = sink.WriteVideo(frame)
+				}
+			}
+			if vidIn++; vidIn == 1 {
+				log.Info().Uint32("ssrc", vh.Ssrc).Msg("first video RTP demuxed from relay (NOT VALIDATED)")
+				e.c.diag.Emit("meta", map[string]any{"event": "first_video_rtp_in", "call_id": callID, "ssrc": vh.Ssrc})
+			}
+			continue
 		}
 		hdr, payload, ok := rxPipe.UnprotectAudio(pkt)
 		if !ok {
@@ -367,6 +436,76 @@ func callPlayerSink(call *Call) (*Player, AudioSink) {
 		return nil, nil
 	}
 	return call.playerAndSink()
+}
+
+// callVideoSink returns a Call's inbound-video sink, tolerating a nil Call.
+func callVideoSink(call *Call) VideoSink {
+	if call == nil {
+		return nil
+	}
+	return call.videoSinkRef()
+}
+
+// videoRtpStepSamples advances the 90 kHz video RTP timestamp one frame at 15 fps.
+const videoRtpStepSamples = 90000 / 15
+
+// videoSender packetizes encoded H.264 access units (Annex-B) into PT-97 RTP, E2E-SRTP
+// protects them with the video pipeline, and sends them to the relay. The send path is
+// fed encoded H.264 (e.g. from the VideoBridge / WebCodecs), not raw frames.
+//
+// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L49-L84
+//
+// NOT VALIDATED: the video send media path is unproven.
+type videoSender struct {
+	mu      sync.Mutex
+	pipe    *MediaPipeline
+	ch      *relay.RelayMediaChannel
+	ssrc    uint32
+	seq     uint16
+	ts      uint32
+	started bool
+}
+
+// send fragments one Annex-B access unit into PT-97 RTP packets (marker on the last) and
+// sends them to the relay.
+func (vs *videoSender) send(au []byte) {
+	if vs == nil || len(au) == 0 {
+		return
+	}
+	nalus := rtp.SplitAnnexB(au)
+	if len(nalus) == 0 {
+		return
+	}
+	var payloads [][]byte
+	for _, n := range nalus {
+		payloads = append(payloads, rtp.PackageH264NALU(n)...)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.ch == nil {
+		return
+	}
+	if vs.started {
+		vs.ts += videoRtpStepSamples
+	}
+	vs.started = true
+	for i, p := range payloads {
+		hdr := rtp.RtpHeader{
+			PayloadType:    rtp.RtpPayloadTypeH264,
+			SequenceNumber: vs.seq,
+			Timestamp:      vs.ts,
+			Ssrc:           vs.ssrc,
+			Marker:         i == len(payloads)-1,
+		}
+		vs.seq++
+		pkt, err := vs.pipe.ProtectRTP(&hdr, p)
+		if err != nil {
+			continue
+		}
+		if _, err := vs.ch.Send(pkt); err != nil {
+			return
+		}
+	}
 }
 
 // rmsFloat32 returns the root-mean-square level of a PCM frame, a cheap loudness

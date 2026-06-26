@@ -41,6 +41,7 @@ type OfferParams struct {
 	PrivacyToken   []byte // nil = absent
 	Capability     []byte // nil = absent
 	DeviceIdentity []byte // nil = absent
+	Video          bool   // true = advertise <video> (video call)
 }
 
 // BuildOffer builds <call to=peer><offer …>…</offer></call> with the mandatory
@@ -61,6 +62,9 @@ func BuildOffer(p *OfferParams, log ...zerolog.Logger) waBinary.Node {
 		children = append(children, waBinary.Node{Tag: "privacy", Content: p.PrivacyToken})
 	}
 	children = append(children, audioOpus("8000"), audioOpus("16000"))
+	if p.Video {
+		children = append(children, videoOfferNode())
+	}
 	children = append(children, waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}})
 	if p.Capability != nil {
 		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
@@ -104,6 +108,7 @@ type AcceptParams struct {
 	VoipSettings []byte         // nil = absent
 	Capability   []byte         // nil = absent
 	Metadata     waBinary.Attrs // nil = absent
+	Video        bool           // true = advertise <video> (video call)
 }
 
 // BuildAccept builds <accept>: audio → [te priority=2] → net medium=2 → encopt →
@@ -129,6 +134,9 @@ func BuildAccept(p *AcceptParams, log ...zerolog.Logger) waBinary.Node {
 	}
 	children = append(children, waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "2"}})
 	children = append(children, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
+	if p.Video {
+		children = append(children, videoAcceptNode())
+	}
 	if p.Capability != nil {
 		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
 	}

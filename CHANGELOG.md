@@ -7,6 +7,86 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — refine the video API to mirror the audio Source/Sink model
+- Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
+  registration + a Sink interface), so it reads like any mainstream media API:
+  - **Receive**: `Call.ReceiveVideo(sink VideoSink)` (mirrors `Call.Receive`), with `VideoSink`
+    (`WriteVideo`/`Close`), a `VideoSinkFunc` callback adapter (mirrors `SinkFunc`), and a
+    built-in `AnnexBRecorder(path)` that records the peer's H.264 to a `.h264` file — the video
+    analog of `WAVRecorder`.
+  - **Send**: `Call.SendVideo(accessUnit []byte) error` — push one encoded H.264 access unit
+    (Annex-B), the way you'd write a sample to a track; returns an error if media isn't up.
+  - **State**: `Call.OnVideoState(func(VideoState))` with a typed `VideoState{Active, Upgrade,
+    Orientation, Raw}`, replacing the raw `(state, orientation int)` tuple.
+  - `Call.IsVideo()` unchanged.
+  Replaces `OnVideoFrame` / `SendVideoFrame` / the int-tuple `OnVideoState`. Library carries
+  only the types (`video.go`); the WebCodecs bridge stays in `examples/cli/video.go`. Lib +
+  CLI build, tests green.
+
+### meowcaller — ack the video upgrade with `type="video"` (fix mid-call audio→video upgrade)
+- **Diagnosis** (live diag dump): on a mid-call `<video state="11">` upgrade, meowcaller acked
+  with whatsmeow's generic **typeless** `<ack class="call">`, whereas the real WhatsApp client
+  acks with **`type="video"`**. Without the typed ack the sender treats the upgrade as
+  un-accepted and reverts to `state="0"` after ~5 s, never streaming video — the dump showed
+  the upgrade arrive, the typeless ack, then revert, with **0 PT-97 packets**. (From-start
+  video calls are unaffected: video is negotiated in the `<offer>`/`<accept>` handshake, so the
+  upgrade-ack path is never used — which is why only from-start worked.)
+- **Fix**: `onCallRaw` now sends a typed `<ack class="call" type="video">` for inbound
+  `<video>` stanzas and skips whatsmeow's generic ack for them (returns "handled"). NOT
+  VALIDATED pending a live upgrade re-test; if the typed ack alone is insufficient, the next
+  candidate is an explicit `<video>` accept reply.
+
+### mlow — decode the 0x92 SplitRed multi-frame container (video-call audio fix) — `KAT-verified`
+- `MlowDecoder.Decode` now detects the `0x92 <count>` SplitRed container WhatsApp uses in
+  video calls (DTX on): several sequential 60 ms MLow frames packed length-delimited in one
+  RTP payload. meowcaller previously decoded the raw container as a bare frame —
+  range-decoding the header bytes as audio → near-silence/noise (in a live video-call dump
+  only **12 of 397** peer-audio frames had non-zero RMS). New `splitContainer` splits it;
+  each sub-frame is decoded in order and concatenated. Additive and gated on the `0x92`
+  marker, so the bare-frame KATs are unchanged (mlow KATs green). Surfaced by WaCalls
+  `feat/video-calls` `decoder.go`; origin is the whatsapp-rust MLow decoder.
+
+### meowcaller — bidirectional video media + orientation, based on WaCalls
+- **Receive (confirmed live)**: `engine.runMedia` demuxes the recv loop by RTP payload type
+  — H.264 (PT 97) → a second WARP pipeline on the video SSRC (participant slot 2) →
+  SRTP-unprotect → `rtp.H264Depacketizer` → Annex-B reassembly on the marker →
+  `Call.OnVideoFrame`. `onOffer` flags a video call via `signaling.OfferHasVideo`
+  (`Call.IsVideo()`).
+- **Send**: `Call.SendVideoFrame(annexB)` fragments an encoded H.264 access unit
+  (`rtp.SplitAnnexB` → `PackageH264NALU`) into PT-97 RTP (video SSRC, marker on the last
+  NAL, 90 kHz / 15 fps), E2E-SRTP-protects it via the new `MediaPipeline.ProtectRTP`, and
+  sends it to the relay. Ported from WaCalls `callmanager_video.FeedCapturedVideo`.
+  meowcaller carries *encoded* H.264 — no pure-Go encoder (the browser encodes).
+- **Orientation**: inbound standalone `<video>` stanzas are dispatched in `onCallRaw` →
+  `engine.onVideoStanza` → `Call.OnVideoState(state, orientation)`; the example bridge
+  rotates the displayed canvas by orientation × 90°.
+- **Video bridge moved to the example, not the library**: the ephemeral WebCodecs HTTP
+  bridge now lives in `examples/cli/video.go` (package main). The library boundary stays the
+  Call API (`OnVideoFrame` / `SendVideoFrame` / `OnVideoState`); the demo server (SSE `/in`
+  display + orientation, POST `/out` camera) is example code. `autoaccept` starts one per
+  call and prints its URL. Mirrors WaCalls's React + WebCodecs client (see README Credits).
+- The send path and orientation rotation are implemented but not yet confirmed on a live call.
+  Receive demux carries `// Source of truth:` links to WaCalls `callmanager_video.go` and
+  emits a `video` diag stream per inbound frame.
+
+### signaling/video — `<video>` advertise + inbound detect, ported from WaCalls — `KAT-verified`
+- New `signaling/video.go`: optional `<video enc=h264 dec=h264 …>` advertisement on
+  `BuildOffer`/`BuildAccept` (additive `Video bool` on the params — the audio path is
+  unchanged), and `OfferHasVideo(node)` to detect an inbound video call by the `<video>`
+  child. **Ported from WaCalls (jotadev66, MIT) `feat/video-calls` `2d6a1f6`** with
+  `// Source of truth:` links; KAT (`video_test.go`) covers the advertise positions +
+  detection. meowcaller's `CapabilityOffer` is already `…e4bb13`, matching the branch.
+
+### rtp/h264 — H.264 RTP packetization, ported from WaCalls — `KAT-verified`
+- New `rtp/h264.go`: `PackageH264NALU` (single payload / FU-A fragmentation),
+  `PackageH264STAPA`, `SplitAnnexB`, and `H264Depacketizer` — RFC 6184 H.264
+  packetization/depacketization, the codec layer for video calls. **Ported verbatim from
+  [WaCalls](https://github.com/JotaDev66/WaCalls) (jotadev66, MIT) `feat/video-calls`
+  `2d6a1f6`**; each function carries a `// Source of truth:` permalink to its WaCalls
+  origin, and the KAT (`h264_test.go`, also ported) covers single-NALU / FU-A / STAP-A
+  roundtrip and Annex-B split. First module of the WaCalls-based video support (see README
+  Credits). Framing-agnostic, so it drops in cleanly; the SRTP/relay integration follows.
+
 ### diag — engine emissions: keying/ssrc/srtp/rtp/media/relay/stun/meta streams
 - Wired exact `e.c.diag.Emit(...)` calls at the engine boundaries (nil-safe, so zero
   cost when diagnostics are off). `engine.go`: **keying** (outbound generated callKey,

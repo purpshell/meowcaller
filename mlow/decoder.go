@@ -57,6 +57,22 @@ func (d *MlowDecoder) Decode(payload []byte) []float32 {
 		d.log.Trace().Msg("decode: empty payload, emitting silence")
 		return make([]float32, opusFrameSamps)
 	}
+	// SplitRed multi-frame container (0x92 <count>), seen in video calls with DTX on:
+	// WhatsApp packs several sequential 60 ms MLow frames into one RTP payload as
+	// length-delimited sub-frames (main last). Without this, meowcaller decoded the raw
+	// container as a bare frame — range-decoding the count/length header bytes as audio →
+	// near-silence/noise (the video-call symptom). Split it and decode every sub-frame in
+	// order, concatenating, so playout matches the RTP timestamp span. This is a different
+	// layout (extra count byte) from red.go's DepackSplitRed.
+	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/media/mlow/decoder.go#L66-L93
+	if subs, ok := splitContainer(payload); ok {
+		d.log.Trace().Int("sub_frames", len(subs)).Int("payload_bytes", len(payload)).Msg("decode: 0x92 SplitRed container")
+		var out []float32
+		for _, sf := range subs {
+			out = append(out, d.decodeFrame(sf)...)
+		}
+		return out
+	}
 	d.log.Trace().Int("payload_bytes", len(payload)).Int32("redundancy", d.redundancy).Msg("decode packet")
 	if d.redundancy > 0 {
 		frames, err := DepackSplitRed(payload, d.log)
@@ -72,6 +88,41 @@ func (d *MlowDecoder) Decode(payload []byte) []float32 {
 		return d.decodeFrame(main)
 	}
 	return d.decodeFrame(payload)
+}
+
+// splitContainer parses a 0x92 multi-frame SplitRed container into its sequential
+// sub-frames: 0x92 <count> [ <len> <frame> ]*(count-1) <last frame = rest>. It returns
+// ok=false for anything that is not a well-formed container, so the caller decodes the
+// payload as a bare frame (the marker 0x92 is distinct from the bare-frame TOC bytes).
+//
+// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/media/mlow/decoder.go#L96-L122
+func splitContainer(p []byte) ([][]byte, bool) {
+	if len(p) < 3 || p[0] != 0x92 {
+		return nil, false
+	}
+	count := int(p[1])
+	if count < 2 || count > 8 {
+		return nil, false
+	}
+	frames := make([][]byte, 0, count)
+	off := 2
+	for i := 0; i < count-1; i++ {
+		if off >= len(p) {
+			return nil, false
+		}
+		flen := int(p[off])
+		off++
+		if off+flen > len(p) {
+			return nil, false
+		}
+		frames = append(frames, p[off:off+flen])
+		off += flen
+	}
+	if off >= len(p) {
+		return nil, false
+	}
+	frames = append(frames, p[off:])
+	return frames, true
 }
 
 func (d *MlowDecoder) decodeFrame(frame []byte) []float32 {

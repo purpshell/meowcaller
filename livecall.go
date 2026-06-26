@@ -15,13 +15,15 @@ type Call struct {
 	id   string
 	peer types.JID
 
-	mu      sync.Mutex
-	phase   CallPhase
-	player  *Player
-	sink    AudioSink
-	onReady func()
-	onEnd   func(reason string)
-	onState func(CallPhase)
+	mu           sync.Mutex
+	phase        CallPhase
+	player       *Player
+	sink         AudioSink
+	onReady      func()
+	onEnd        func(reason string)
+	onState      func(CallPhase)
+	videoSink    VideoSink
+	onVideoState func(VideoState)
 }
 
 // ID returns the call-id (32 uppercase hex chars).
@@ -35,6 +37,15 @@ func (c *Call) State() CallPhase {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.phase
+}
+
+// IsVideo reports whether the inbound offer advertised video. Attach a VideoSink with
+// ReceiveVideo to receive the peer's H.264.
+func (c *Call) IsVideo() bool {
+	if m := c.eng.lookup(c.id); m != nil {
+		return m.isVideo
+	}
+	return false
 }
 
 // Answer accepts an inbound call (preaccept + accept) and brings media up. No-op error
@@ -72,6 +83,48 @@ func (c *Call) Receive(sink AudioSink) {
 	c.sink = sink
 	c.mu.Unlock()
 }
+
+// ReceiveVideo attaches a sink for the peer's H.264 video, delivered as Annex-B access units
+// (one per frame, reassembled on the RTP marker), replacing any previous one. Without a sink
+// the inbound video is discarded. The video analog of Receive; AnnexBRecorder records to a
+// .h264 file, or use VideoSinkFunc to forward to a callback.
+//
+// NOT VALIDATED: the inbound-video media path is unproven (no captured video-RTP vector).
+func (c *Call) ReceiveVideo(sink VideoSink) {
+	c.mu.Lock()
+	c.videoSink = sink
+	c.mu.Unlock()
+}
+
+// videoSinkRef returns the Call's current video sink under its lock.
+func (c *Call) videoSinkRef() VideoSink {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.videoSink
+}
+
+// OnVideoState registers a callback fired for each inbound <video> state stanza — the peer's
+// video on/off, the audio→video upgrade, and device orientation (rotate by Orientation × 90°).
+func (c *Call) OnVideoState(fn func(VideoState)) {
+	c.mu.Lock()
+	c.onVideoState = fn
+	c.mu.Unlock()
+}
+
+// onVideoStateFn returns the Call's video-state callback under its lock.
+func (c *Call) onVideoStateFn() func(VideoState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.onVideoState
+}
+
+// SendVideo sends one already-encoded H.264 access unit (Annex-B) to the peer — fed from an
+// external encoder (browser WebCodecs, ffmpeg, hardware). Returns an error if the call has no
+// active video media yet. meowcaller does not encode pixels (no pure-Go H.264 encoder); this
+// is the video analog of writing a sample to a track.
+//
+// NOT VALIDATED: the video send media path is unproven.
+func (c *Call) SendVideo(accessUnit []byte) error { return c.eng.sendVideoFrame(c.id, accessUnit) }
 
 // OnReady registers a callback fired once media is flowing (relay bound, first frames
 // exchanged).

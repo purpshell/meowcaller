@@ -2,4 +2,7 @@
 *.db
 *.db-*
 *.wav
+*.h264
+diag*/
+diagdump*/
 wa-voip-wam.json

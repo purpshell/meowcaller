@@ -202,6 +202,23 @@ func (p *MediaPipeline) ProtectAudio(opusPayload []byte) ([]byte, error) {
 	return out, nil
 }
 
+// ProtectRTP E2E-SRTP encrypts payload under the send keys for a caller-built RTP header
+// and appends the WARP MI tag. It is the generic form of ProtectAudio used by the video
+// send path, which manages its own PT-97 sequencer (header) per WaCalls.
+//
+// NOT VALIDATED: the video send media path is unproven.
+func (p *MediaPipeline) ProtectRTP(header *rtp.RtpHeader, payload []byte) ([]byte, error) {
+	roc := p.sendRoc.Advance(header.SequenceNumber)
+	packet := rtp.EncodeRtpHeader(header)
+	encrypted, err := srtp.CryptPayload(&p.sendKeys, header.Ssrc, header.SequenceNumber, roc, payload)
+	if err != nil {
+		p.log.Debug().Err(err).Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint32("roc", roc).Msg("protect rtp: SRTP encrypt failed")
+		return nil, err
+	}
+	packet = append(packet, encrypted...)
+	return srtp.AppendWarpMITag(p.sendKeys.AuthKey[:], packet, roc, p.warpMITagLen), nil
+}
+
 // UnprotectAudio strips the WARP MI tag (not verified), parses the header, and
 // decrypts the payload, guessing the ROC from the recv tracker. ok=false on a
 // malformed packet.

@@ -12,7 +12,10 @@ import (
 // profile 0xdebe), Opus payload classifiers, and the send-side sequencer.
 
 const (
-	RtpPayloadTypeOpus          uint8  = 120
+	RtpPayloadTypeOpus uint8 = 120
+	// RtpPayloadTypeH264 is the WhatsApp video (H.264) RTP payload type, used to demux
+	// video off the relay. Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/core/types.go#L44
+	RtpPayloadTypeH264          uint8  = 97
 	WhatsappRtpExtensionProfile uint16 = 0xdebe
 	WhatsappRtpHeaderSize       int    = 16
 	WhatsappRtpHeaderDtxSize    int    = 20

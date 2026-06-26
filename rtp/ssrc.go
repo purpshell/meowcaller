@@ -13,6 +13,10 @@ import (
 // WasmRelayStreamSlotWords are the slot words for the 9-stream relay allocate plan.
 var WasmRelayStreamSlotWords = [9]uint32{0, 1, 4, 2, 3, 5, 7, 8, 6}
 
+// VideoSlotWord is the relay stream slot for a participant's video SSRC (audio is slot 0).
+// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L13
+const VideoSlotWord uint32 = 2
+
 // DeriveWasmParticipantSsrc derives a participant/stream SSRC:
 // HKDF-SHA256(salt=slotWord LE32, ikm=callID, info=lid, 4), read back as LE u32.
 func DeriveWasmParticipantSsrc(callID, lid string, slotWord uint32, log ...zerolog.Logger) (uint32, error) {

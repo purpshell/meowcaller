@@ -50,7 +50,9 @@ type engineCall struct {
 	from    types.JID // the <call> "from" — where stanzas are addressed
 
 	direction CallDirection
-	codec     AudioCodec // audio codec for this call, selected from voip_settings (MLow default)
+	codec     AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
+	isVideo   bool         // inbound offer advertised <video> (video call)
+	videoTx   *videoSender // video send pipeline, live while media runs
 	started   bool
 	cancel    context.CancelFunc // tears down this call's media goroutine
 
@@ -118,6 +120,22 @@ func (e *engine) lookup(callID string) *engineCall {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.calls[callID]
+}
+
+// sendVideoFrame packetizes one encoded H.264 access unit and sends it to the relay, if a
+// video send pipeline is live for the call.
+func (e *engine) sendVideoFrame(callID string, au []byte) error {
+	e.mu.Lock()
+	var vs *videoSender
+	if m := e.calls[callID]; m != nil {
+		vs = m.videoTx
+	}
+	e.mu.Unlock()
+	if vs == nil {
+		return errors.New("meowcaller: call has no active video media")
+	}
+	vs.send(au)
+	return nil
 }
 
 // placeCall resolves target to a LID, builds and sends the <offer>, registers the Call,
@@ -259,11 +277,18 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	m.creator = ev.CallCreator
 	m.from = ev.From
 	m.direction = CallDirectionIncoming
+	// Detect a video call by the <video> child of the offer (ported from WaCalls).
+	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_signaling.go#L24
+	isVideo := signaling.OfferHasVideo(ev.Data)
+	m.isVideo = isVideo
 	if r := findRelay(ev.Data); r != nil {
 		m.relay = parseRelayData(r)
 	}
 	e.applyVoipSettingsCodec(m, ev.Data, ev.CallID)
 	e.mu.Unlock()
+	if isVideo {
+		e.c.log.Info().Str("call_id", ev.CallID).Msg("inbound call advertises video")
+	}
 
 	// Preaccept eagerly: it is a preparation step, done independently of the later
 	// Answer/Reject decision. It keeps the offer alive and joins the relay election while
@@ -514,35 +539,108 @@ func (e *engine) onCallAck(ack *waBinary.Node) {
 // onCallRaw sees every raw <call> node before whatsmeow processes it. It fires the
 // deferred <accept> when the caller's first <mute_v2> arrives (whatsmeow surfaces no
 // mute event, so this is the only place we see it).
-func (e *engine) onCallRaw(callNode *waBinary.Node) {
+// onCallRaw inspects a raw <call> node before whatsmeow processes it. It returns true when
+// it has fully handled the node (including sending the appropriate ack), so the caller skips
+// whatsmeow's generic typeless ack.
+func (e *engine) onCallRaw(callNode *waBinary.Node) bool {
 	kids := callNode.GetChildren()
-	if len(kids) != 1 {
+	if len(kids) == 0 {
+		return false
+	}
+	switch kids[0].Tag {
+	case "mute_v2":
+		mv := kids[0].AttrGetter()
+		callID := mv.String("call-id")
+		if callID == "" {
+			return false
+		}
+		// The deferred <accept> fires on the FIRST mute_v2 only — it arrives right after
+		// the relaylatency/transport. Later mute_v2 nodes are in-call mute-state changes
+		// (e.g. 1→0) and must not re-run the accept path on an already-accepted call.
+		e.mu.Lock()
+		m := e.calls[callID]
+		pending := m != nil && m.acceptPending
+		e.mu.Unlock()
+		if !pending {
+			e.c.log.Debug().
+				Str("call_id", callID).
+				Str("mute_state", mv.String("mute-state")).
+				Msg("mute_v2 ignored; call not awaiting accept")
+			return false
+		}
+		e.c.log.Info().Str("call_id", callID).Msg("first mute_v2 received; sending deferred accept")
+		e.sendAccept(callID, callNode.AttrGetter().JID("from"), mv.JID("call-creator"))
+		return false
+	case "video":
+		// Acknowledge the <video> stanza with type="video" — the mid-call video-upgrade
+		// (state=11) acceptance signal. whatsmeow's generic typeless ack does not satisfy the
+		// sender, which then cancels the upgrade after ~5s before streaming any video.
+		e.ackVideoStanza(callNode)
+		e.onVideoStanza(&kids[0])
+		return true
+	}
+	return false
+}
+
+// ackVideoStanza sends the typed <ack class="call" type="video"> for an inbound <video>
+// <call> node (replicating the real WhatsApp client; whatsmeow would otherwise send a bare
+// typeless ack that the peer treats as non-acceptance of a video upgrade).
+func (e *engine) ackVideoStanza(callNode *waBinary.Node) {
+	ag := callNode.AttrGetter()
+	id := ag.String("id")
+	from := ag.JID("from") // "from" is a JID attr (cf. the mute_v2 path), not a plain string
+	if id == "" || from.IsEmpty() {
+		e.c.log.Warn().Str("id", id).Msg("video ack: missing id/from, not acking")
 		return
 	}
-	if kids[0].Tag != "mute_v2" {
+	ack := waBinary.Node{Tag: "ack", Attrs: waBinary.Attrs{
+		"class": "call", "id": id, "to": from, "type": "video",
+	}}
+	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), ack); err != nil {
+		e.c.log.Warn().Err(err).Str("id", id).Msg("send video ack failed")
 		return
 	}
-	mv := kids[0].AttrGetter()
-	callID := mv.String("call-id")
+	e.c.log.Debug().Str("id", id).Msg("sent type=video ack")
+}
+
+// onVideoStanza handles an inbound standalone <video> state stanza — the peer's video
+// on/off and device orientation — and fires the Call's OnVideoState listener. whatsmeow
+// surfaces no event for it (same as mute_v2), so it is intercepted here.
+func (e *engine) onVideoStanza(v *waBinary.Node) {
+	ag := v.AttrGetter()
+	callID := ag.String("call-id")
 	if callID == "" {
 		return
 	}
-	// The deferred <accept> fires on the FIRST mute_v2 only — it arrives right after
-	// the relaylatency/transport. Later mute_v2 nodes are in-call mute-state changes
-	// (e.g. 1→0) and must not re-run the accept path on an already-accepted call.
-	e.mu.Lock()
-	m := e.calls[callID]
-	pending := m != nil && m.acceptPending
-	e.mu.Unlock()
-	if !pending {
-		e.c.log.Debug().
-			Str("call_id", callID).
-			Str("mute_state", mv.String("mute-state")).
-			Msg("mute_v2 ignored; call not awaiting accept")
+	state, _ := strconv.Atoi(ag.OptionalString("state"))
+	orientation, _ := strconv.Atoi(ag.OptionalString("device_orientation"))
+	e.c.log.Debug().Str("call_id", callID).Int("state", state).Int("orientation", orientation).Msg("inbound video state")
+	m := e.lookup(callID)
+	if m == nil {
 		return
 	}
-	e.c.log.Info().Str("call_id", callID).Msg("first mute_v2 received; sending deferred accept")
-	e.sendAccept(callID, callNode.AttrGetter().JID("from"), mv.JID("call-creator"))
+	if m.call != nil {
+		if fn := m.call.onVideoStateFn(); fn != nil {
+			fn(VideoState{
+				Active:      state == signaling.VideoStateActive,
+				Upgrade:     state == signaling.VideoStateUpgrade,
+				Orientation: orientation,
+				Raw:         state,
+			})
+		}
+	}
+	// On a mid-call video upgrade (state=11), reply with our own <video> state so the call is
+	// promoted to video server-side — the type="video" ack alone leaves the sender thinking
+	// the callee never entered video mode, so it reverts to state=0 after ~5s. NOT VALIDATED.
+	if state == signaling.VideoStateUpgrade {
+		reply := signaling.BuildVideoState(callID, m.from, m.creator, e.c.wa.GenerateMessageID(),
+			signaling.VideoStateActive, 0, signaling.VideoCodecH264)
+		if err := e.c.wa.DangerousInternals().SendNode(context.Background(), reply); err != nil {
+			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("send video accept failed")
+		} else {
+			e.c.log.Info().Str("call_id", callID).Msg("sent <video> accept (state=1) for upgrade")
+		}
+	}
 }
 
 // onTerminate tears down a call's media and fires the Call's OnEnd listener.
@@ -592,7 +690,12 @@ func (e *engine) installCallAckHook() {
 	}
 	origCall := handlers["call"]
 	handlers["call"] = func(ctx context.Context, node *waBinary.Node) {
-		e.onCallRaw(node)
+		// onCallRaw returns true when it fully handled the node (incl. its own ack), so
+		// whatsmeow's generic typeless ack is skipped — the <video> upgrade needs a typed
+		// type="video" ack, which a bare ack does not satisfy (the peer reverts otherwise).
+		if e.onCallRaw(node) {
+			return
+		}
 		if origCall != nil {
 			origCall(ctx, node)
 		}

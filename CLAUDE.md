@@ -9,13 +9,6 @@ doing anything:
    function envelopes with `// TODO` bodies and then **stop for the human** to
    direct the logic. You explain *why* in the conversation, never in code comments.
    Verify against the test vector or it is not done.
-2. **@PLAN.md** — the model and the standard.
-3. **@MODULES.md** — the module registry and build order. Pick the
-   next `planned` module in dependency order.
-4. **@datasheets/** — one datasheet per module. Each has the
-   reference source verbatim, the Go envelope (signatures), and suggestions. Build
-   a module only from its datasheet.
-5. **@GLOSSARY.md** — every acronym/term used in the datasheets.
 
 Non-negotiables: the Go never imports or copies a reference library (it stays an
 independent implementation), but every function carries a `// Source of truth:`
