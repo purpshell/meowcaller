@@ -294,7 +294,7 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	// Answer/Reject decision. It keeps the offer alive and joins the relay election while
 	// the integrator decides — even a call the user goes on to decline has usually already
 	// been preaccepted.
-	if err := e.sendPreaccept(ev.CallID, ev.From, ev.CallCreator); err != nil {
+	if err := e.sendPreaccept(ev.CallID, ev.From, ev.CallCreator, isVideo); err != nil {
 		e.c.log.Warn().Err(err).Str("call_id", ev.CallID).Msg("preaccept failed")
 	}
 
@@ -307,19 +307,25 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 // eagerly when the offer arrives (see onOffer), independent of the later Answer/Reject
 // decision. Single rate 16000 + encopt + capability, NO metadata — built inline to match
 // the captured WA-Web preaccept body exactly.
-func (e *engine) sendPreaccept(callID string, to, creator types.JID) error {
+func (e *engine) sendPreaccept(callID string, to, creator types.JID, isVideo bool) error {
+	// A video call advertises the <video> decoder here and uses the video capability blob
+	// (0xfa); the audio capability the callee otherwise sends doesn't bring video up.
+	capability := signaling.CapabilityOffer
+	content := []waBinary.Node{
+		{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
+	}
+	if isVideo {
+		capability = signaling.CapabilityVideoOffer
+		content = append(content, signaling.VideoPreacceptNode())
+	}
+	content = append(content,
+		waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
+		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capability},
+	)
 	pre := waBinary.Node{
-		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": to, "id": e.c.wa.DangerousInternals().GenerateRequestID()},
-		Content: []waBinary.Node{{
-			Tag:   "preaccept",
-			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": creator},
-			Content: []waBinary.Node{
-				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
-				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
-				{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: signaling.CapabilityOffer},
-			},
-		}},
+		Tag:     "call",
+		Attrs:   waBinary.Attrs{"to": to, "id": e.c.wa.DangerousInternals().GenerateRequestID()},
+		Content: []waBinary.Node{{Tag: "preaccept", Attrs: waBinary.Attrs{"call-id": callID, "call-creator": creator}, Content: content}},
 	}
 	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), pre); err != nil {
 		return fmt.Errorf("send preaccept: %w", err)
@@ -356,12 +362,14 @@ func (e *engine) sendAccept(callID string, to, creator types.JID) {
 		return
 	}
 	m.acceptPending = false
+	isVideo := m.isVideo
 	e.mu.Unlock()
 
 	accept := signaling.BuildAccept(&signaling.AcceptParams{
 		CallID: callID, To: to, CallCreator: creator,
 		AudioRates: []string{"16000"},
 		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
+		Video:      isVideo,
 	})
 	accept.Attrs["id"] = e.c.wa.DangerousInternals().GenerateRequestID()
 	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), accept); err != nil {

@@ -13,8 +13,12 @@ import (
 // is load-bearing (the server returns 439 if it is wrong). Stanza ids generated
 // from random bytes are passed in so the builders stay pure.
 
-// CapabilityOffer is the capability blob for <offer>/<accept> (ver=1).
+// CapabilityOffer is the capability blob for an audio <offer>/<accept> (ver=1).
 var CapabilityOffer = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x13}
+
+// CapabilityVideoOffer is the capability blob a real client advertises on a video call:
+// byte 6 is 0xfa instead of the audio 0xbb. The callee won't bring up video without it.
+var CapabilityVideoOffer = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xfa, 0x13}
 
 // CapabilityPreaccept is the capability blob for <preaccept> (ver=1).
 var CapabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}

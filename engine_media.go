@@ -354,7 +354,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
 					e.c.diag.Emit("stun", map[string]any{
-						"event": "binding_request_answered",
+						"event":     "binding_request_answered",
 						"tx_id_hex": hex.EncodeToString(tx[:]), "resp_hex": hex.EncodeToString(resp),
 					})
 				}
@@ -455,13 +455,15 @@ const videoRtpStepSamples = 90000 / 15
 //
 // Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L49-L84
 //
-// NOT VALIDATED: the video send media path is unproven.
+// Each packet carries the RFC 5285 0xBEDE header extension (BuildVideoRtpExtension);
+// without it the peer drops the sender's video.
 type videoSender struct {
 	mu      sync.Mutex
 	pipe    *MediaPipeline
 	ch      *relay.RelayMediaChannel
 	ssrc    uint32
 	seq     uint16
+	tccSeq  uint16 // transport-wide-cc sequence, one per packet sent (RTP 0xBEDE ext)
 	ts      uint32
 	started bool
 }
@@ -496,8 +498,13 @@ func (vs *videoSender) send(au []byte) {
 			Timestamp:      vs.ts,
 			Ssrc:           vs.ssrc,
 			Marker:         i == len(payloads)-1,
+			// 0xBEDE header extension (abs-send-time + CVO + transport-cc); the peer
+			// won't render video sent without it.
+			ExtensionProfile: rtp.VideoRtpExtensionProfile,
+			ExtensionData:    rtp.BuildVideoRtpExtension(vs.tccSeq, 0),
 		}
 		vs.seq++
+		vs.tccSeq++
 		pkt, err := vs.pipe.ProtectRTP(&hdr, p)
 		if err != nil {
 			continue
