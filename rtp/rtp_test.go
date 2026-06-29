@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -79,7 +80,7 @@ func TestParseRoundTripsFixedFields(t *testing.T) {
 		t.Errorf("RtpHeaderByteLength = (%d, %v), want (16, true)", n, ok)
 	}
 	got, ok := ParseRtpHeader(b)
-	if !ok || got != h {
+	if !ok || !reflect.DeepEqual(got, h) {
 		t.Errorf("ParseRtpHeader = (%+v, %v), want (%+v, true)", got, ok, h)
 	}
 }

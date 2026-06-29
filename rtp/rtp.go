@@ -101,19 +101,31 @@ func EstimateSrtpRtpWireBytes(opusPayload []byte) int {
 	return headerSize + len(opusPayload) + tagLen
 }
 
-// RtpHeader is the fixed RTP header plus an optional 0xdebe extension word.
+// RtpHeader is the fixed RTP header plus an optional extension. Audio uses the single
+// 0xdebe WARP extension word (ExtensionWord); video uses the RFC 5285 one-byte 0xBEDE
+// header extension (ExtensionProfile + ExtensionData) — see BuildVideoRtpExtension.
 type RtpHeader struct {
 	Marker         bool
 	PayloadType    uint8
 	SequenceNumber uint16
 	Timestamp      uint32
 	Ssrc           uint32
-	ExtensionWord  *uint32 // nil = no 0xdebe extension word
+	ExtensionWord  *uint32 // nil = no 0xdebe extension word (audio)
+
+	// ExtensionData carries a generic, already 4-byte-aligned RTP header extension
+	// payload (video 0xBEDE). When set, it takes precedence over ExtensionWord and
+	// ExtensionProfile names the extension profile (VideoRtpExtensionProfile).
+	ExtensionProfile uint16
+	ExtensionData    []byte
 }
 
-// ByteSize is the on-wire header size (16, or 20 with an extension word).
+// ByteSize is the on-wire header size: 16 (audio, no word), 20 (audio DTX word), or
+// 12 + 4 + len(ExtensionData) for a generic (video) extension.
 func (h *RtpHeader) ByteSize() int {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/rtp.rs#L93-L99
+	if len(h.ExtensionData) > 0 {
+		return 12 + 4 + len(h.ExtensionData)
+	}
 	if h.ExtensionWord != nil {
 		return WhatsappRtpHeaderDtxSize
 	}
@@ -199,6 +211,19 @@ func EncodeRtpHeader(header *RtpHeader, log ...zerolog.Logger) []byte {
 	buf[3] = byte(header.SequenceNumber)
 	binary.BigEndian.PutUint32(buf[4:8], header.Timestamp)
 	binary.BigEndian.PutUint32(buf[8:12], header.Ssrc)
+	if len(header.ExtensionData) > 0 {
+		// Generic RFC 5285 header extension (video 0xBEDE): profile + 32-bit word count,
+		// followed by the (4-byte-aligned) extension payload.
+		profile := header.ExtensionProfile
+		if profile == 0 {
+			profile = VideoRtpExtensionProfile
+		}
+		binary.BigEndian.PutUint16(buf[12:14], profile)
+		binary.BigEndian.PutUint16(buf[14:16], uint16(len(header.ExtensionData)/4))
+		copy(buf[16:], header.ExtensionData)
+		lg.Trace().Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint16("profile", profile).Int("ext_bytes", len(header.ExtensionData)).Int("header_bytes", size).Msg("encoded rtp header with generic extension")
+		return buf
+	}
 	if size >= 16 {
 		binary.BigEndian.PutUint16(buf[12:14], WhatsappRtpExtensionProfile)
 		var extWords uint16
