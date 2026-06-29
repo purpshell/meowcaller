@@ -55,6 +55,16 @@ func videoAcceptNode() waBinary.Node {
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{"enc": VideoCodecH264}}
 }
 
+// VideoPreacceptNode builds the <video> advertisement for a <preaccept>: the supported
+// decoder plus the screen geometry, no enc (the callee isn't sending yet).
+// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/signaling/signaling_build.go#L165-L168
+func VideoPreacceptNode() waBinary.Node {
+	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
+		"dec": "H264", "device_orientation": "0",
+		"screen_width": "1920", "screen_height": "1080",
+	}}
+}
+
 // OfferHasVideo reports whether a parsed <offer> node advertises video — the presence of
 // a <video> child marks an inbound video call.
 func OfferHasVideo(offer *waBinary.Node) bool {
