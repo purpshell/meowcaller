@@ -154,6 +154,12 @@ type MediaPipeline struct {
 	sendRoc      srtp.RocTracker
 	recvRoc      srtp.RecvRocTracker
 	log          zerolog.Logger
+
+	// E2E recv-key auto-selection (see session_recvkey.go): lock onto the peer's
+	// real-device key via WARP MI-tag match instead of the hard-coded device :0.
+	recvCandidates []recvKeyCandidate
+	recvLocked     bool
+	recvTries      int
 }
 
 // NewMediaPipeline derives both directions from the 32-byte callKey: send keys from
@@ -175,11 +181,12 @@ func NewMediaPipeline(callKey []byte, selfJID, peerJID string, ssrc, samplesPerP
 		Uint32("samples_per_packet", samplesPerPacket).Int("warp_mi_tag_len", srtp.WarpMITagLen).
 		Msg("media pipeline initialized")
 	return &MediaPipeline{
-		sendKeys:     sendKeys,
-		recvKeys:     recvKeys,
-		warpMITagLen: srtp.WarpMITagLen,
-		stream:       rtp.NewRtpStream(ssrc, samplesPerPacket, false),
-		log:          log,
+		sendKeys:       sendKeys,
+		recvKeys:       recvKeys,
+		warpMITagLen:   srtp.WarpMITagLen,
+		stream:         rtp.NewRtpStream(ssrc, samplesPerPacket, false),
+		log:            log,
+		recvCandidates: buildRecvKeyCandidates(callKey, peerJID, log),
 	}, nil
 }
 
@@ -240,6 +247,7 @@ func (p *MediaPipeline) UnprotectAudio(packet []byte) (rtp.RtpHeader, []byte, bo
 		return rtp.RtpHeader{}, nil, false
 	}
 	roc := p.recvRoc.GuessRoc(header.SequenceNumber)
+	p.selectRecvKey(withoutTag, packet[len(packet)-p.warpMITagLen:], roc)
 	plain, err := srtp.CryptPayload(&p.recvKeys, header.Ssrc, header.SequenceNumber, roc, withoutTag[headerLen:])
 	if err != nil {
 		p.log.Debug().Err(err).Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint32("roc", roc).Msg("unprotect: SRTP decrypt failed")
