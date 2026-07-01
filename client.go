@@ -22,6 +22,8 @@ type Client struct {
 	diag *diag.Recorder
 	eng  *engine
 
+	ringPrimaryOnly bool // offer outbound calls only to the peer's primary device (device 0)
+
 	mu             sync.Mutex
 	onIncomingCall func(*Call)
 }
@@ -31,7 +33,7 @@ type Client struct {
 // interception is in place before the receive loop starts.
 func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
-	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag}
+	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag, ringPrimaryOnly: cfg.ringPrimaryOnly}
 	c.eng = newEngine(c)
 	c.eng.install()
 	return c

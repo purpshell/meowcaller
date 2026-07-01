@@ -160,6 +160,24 @@ func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
 		return nil, fmt.Errorf("peer %s has no devices (unreachable / not on WhatsApp)", peerLID)
 	}
 
+	// With WithPrimaryDeviceOnly, ring only the peer's PRIMARY device (device 0), like a
+	// normal 1:1 call. Offering to every companion device forks the media across legs and
+	// the relay bridges inbound RTP inconsistently for multi-device peers (the call rings
+	// everywhere but the callee's audio may never arrive). Restricting to device 0 removes
+	// the fork. Falls back to all devices if none report device 0.
+	if e.c.ringPrimaryOnly {
+		primaryOnly := devices[:0:0]
+		for _, d := range devices {
+			if d.Device == 0 {
+				primaryOnly = append(primaryOnly, d)
+			}
+		}
+		if len(primaryOnly) > 0 {
+			e.c.log.Info().Int("all_devices", len(devices)).Int("primary_devices", len(primaryOnly)).Msg("ringing peer's primary device only")
+			devices = primaryOnly
+		}
+	}
+
 	var callKey [32]byte
 	if _, err := rand.Read(callKey[:]); err != nil {
 		return nil, err
