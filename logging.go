@@ -10,8 +10,9 @@ import (
 type Option func(*config)
 
 type config struct {
-	log  zerolog.Logger
-	diag *diag.Recorder
+	log             zerolog.Logger
+	diag            *diag.Recorder
+	ringPrimaryOnly bool
 }
 
 func resolveConfig(opts []Option) config {
@@ -27,6 +28,15 @@ func resolveConfig(opts []Option) config {
 // Pass the logger from a context, e.g. WithLogger(*zerolog.Ctx(ctx)).
 func WithLogger(l zerolog.Logger) Option {
 	return func(c *config) { c.log = l }
+}
+
+// WithPrimaryDeviceOnly makes outbound calls ring only the peer's primary device
+// (device 0), like a normal 1:1 call, instead of offering to every registered companion
+// device. Offering to all devices forks the media across legs and the relay bridges
+// inbound RTP inconsistently for multi-device peers (the call rings everywhere but the
+// callee's audio may never arrive). Off by default (preserves the ring-all behavior).
+func WithPrimaryDeviceOnly() Option {
+	return func(c *config) { c.ringPrimaryOnly = true }
 }
 
 // WithDiagnostics attaches a developer-only *diag.Recorder that dumps exact,
