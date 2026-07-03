@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestCallMediaSinksDefaultOff(t *testing.T) {
+	call := &Call{}
+	if _, sink := callPlayerSink(call); sink != nil {
+		t.Fatal("new call unexpectedly has an inbound audio sink")
+	}
+	if sink := callVideoSink(call); sink != nil {
+		t.Fatal("new call unexpectedly has an inbound video sink")
+	}
+
+	audioSink := SinkFunc(func([]float32) {})
+	videoSink := VideoSinkFunc(func([]byte) {})
+	call.Receive(audioSink)
+	call.ReceiveVideo(videoSink)
+	if _, sink := callPlayerSink(call); sink == nil {
+		t.Fatal("Receive did not enable inbound audio")
+	}
+	if sink := callVideoSink(call); sink == nil {
+		t.Fatal("ReceiveVideo did not enable inbound video")
+	}
+}
+
 // regSession builds an outgoing session for the registry tests (reuses the JID
 // helpers from session_test.go in this package).
 func regSession(id string) *CallSession {
