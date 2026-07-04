@@ -40,6 +40,12 @@ func run(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	ctx = logger.WithContext(ctx)
 	switch args[0] {
+	case "pair":
+		cfg, err := parsePairArgs(args[1:], stderr)
+		if err != nil {
+			return err
+		}
+		return runPair(ctx, cfg, stderr)
 	case "notify":
 		cfg, err := parseNotifyArgs(args[1:], stderr)
 		if err != nil {
@@ -65,5 +71,7 @@ func commandLogger(out io.Writer) (zerolog.Logger, error) {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: meowcaller notify [flags] <target> <audio.mp3|wav|ogg|opus|mulaw|ulaw|->")
+	fmt.Fprintln(w, "usage:")
+	fmt.Fprintln(w, "  meowcaller pair [flags]")
+	fmt.Fprintln(w, "  meowcaller notify [flags] <target> <audio.mp3|wav|ogg|opus|mulaw|ulaw|->")
 }

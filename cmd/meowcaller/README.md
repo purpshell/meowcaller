@@ -1,5 +1,15 @@
 # meowcaller command
 
+Pair once in an interactive terminal, using the same store path the automation will use:
+
+```text
+meowcaller pair --store <path>
+```
+
+Scan the QR in WhatsApp under **Linked devices**. A successful command prints
+`MeowCaller linked device ready` and exits; later `pair` runs verify that the saved linked
+device can still connect.
+
 `meowcaller notify` is the headless, send-only command surface for automation:
 
 ```text
@@ -14,4 +24,6 @@ Flags:
 - `--answer-timeout DURATION`: maximum ringing time; default `45s`, `0` disables.
 - `--max-duration DURATION`: maximum playback after answer; default `5m`, `0` streams until EOF.
 
-The first pairing must run in an interactive terminal so the QR never enters service logs. Scan it in WhatsApp under **Linked devices**. Subsequent invocations reuse the protected store and can run headlessly. The command does not offer diagnostic capture and defaults to warning-only structured logs; `MEOW_LOG_LEVEL` opts into a different level.
+Pairing is an explicit terminal step so the QR never enters service logs. `notify` refuses an
+unpaired store when run headlessly. The command does not offer diagnostic capture and defaults
+to warning-only structured logs; `MEOW_LOG_LEVEL` opts into a different level.

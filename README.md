@@ -21,13 +21,14 @@ The installable `meowcaller` command can place a send-only notification call wit
 
 ```sh
 go install github.com/purpshell/meowcaller/cmd/meowcaller@latest
+meowcaller pair
 meowcaller notify +15551234567 notice.wav
 cat notice.mulaw | meowcaller notify +15551234567 -
 ```
 
 Inputs may be WAV, MP3, Ogg/Opus, or raw 8 kHz mono G.711 PCMU (`.mulaw`, `.ulaw`, or stdin with `-`). PCMU is decoded in 480-byte / 60 ms blocks and expanded to the 16 kHz, 960-sample frames required by the call codec. The command sends silence until the recipient answers, streams the input once, hangs up at EOF, and never decrypts or decodes inbound audio because it does not attach a receive sink.
 
-The first interactive run displays a linked-device QR in the terminal. Authentication is then reused from `~/Library/Application Support/meowcaller/whatsapp.db` on macOS or the platform user-config equivalent; override it with `--store`. The store file is created as `0600`; on Unix its parent directory must be user-private (`0700`) so SQLite sidecars cannot expose linked-device credentials. QR data and media are never written to logs, and command logging defaults to `warn` (set `MEOW_LOG_LEVEL` explicitly for troubleshooting).
+`meowcaller pair` displays a linked-device QR in the terminal and exits after the session is ready. Authentication is then reused from `~/Library/Application Support/meowcaller/whatsapp.db` on macOS or the platform user-config equivalent; pass the same `--store` path to `pair` and `notify` when overriding it. The store file is created as `0600`; on Unix its parent directory must be user-private (`0700`) so SQLite sidecars cannot expose linked-device credentials. QR data and media are never written to logs, and command logging defaults to `warn` (set `MEOW_LOG_LEVEL` explicitly for troubleshooting).
 
 Notifications wait up to 45 seconds for an answer and play for at most 5 minutes by default. Both limits are configurable with `--answer-timeout` and `--max-duration`; `--max-duration=0` explicitly permits an unbounded stream through EOF. Hitting a limit stops playback, hangs up, and exits nonzero.
 
