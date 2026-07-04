@@ -73,6 +73,15 @@ func TestSQLiteDSNEscapesPath(t *testing.T) {
 	if got := parsed.Query()["_pragma"]; len(got) != 2 {
 		t.Fatalf("pragma count = %d, want 2", len(got))
 	}
+
+	windowsDSN := sqliteDSN("C:/Users/me/AppData/Roaming/meowcaller/session.db")
+	windowsURL, err := url.Parse(windowsDSN)
+	if err != nil {
+		t.Fatalf("parse Windows DSN: %v", err)
+	}
+	if windowsURL.Host != "" || windowsURL.Path != "/C:/Users/me/AppData/Roaming/meowcaller/session.db" {
+		t.Fatalf("Windows DSN = %q, want drive letter in URL path", windowsDSN)
+	}
 }
 
 func TestPrepareStorePathCreatesPrivateRegularFile(t *testing.T) {

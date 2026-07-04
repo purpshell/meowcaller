@@ -97,10 +97,14 @@ func prepareStorePath(path string) error {
 }
 
 func sqliteDSN(path string) string {
+	urlPath := filepath.ToSlash(path)
+	if len(urlPath) >= 3 && urlPath[1] == ':' && urlPath[2] == '/' {
+		urlPath = "/" + urlPath
+	}
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "busy_timeout(5000)")
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: query.Encode()}).String()
+	return (&url.URL{Scheme: "file", Path: urlPath, RawQuery: query.Encode()}).String()
 }
 
 func (s *linkedSession) Connect(ctx context.Context, qrOut io.Writer, allowQR bool) error {

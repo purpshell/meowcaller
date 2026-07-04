@@ -8,7 +8,7 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 ## [Unreleased]
 
 ### cmd/meowcaller — headless send-only notification calls — `implemented`
-- Added the installable pure-Go `meowcaller pair` and `meowcaller notify` commands for explicit terminal-only linked-device QR setup and one-shot WAV/MP3/Ogg-Opus or raw 8 kHz G.711 PCMU calls, with a user-private persistent store, 45-second answer and 5-minute playback limits (`0` explicitly disables either), EOF hangup, warning-only default logs, no diagnostics, and no mic/speaker/video dependency; calls without a receive sink now discard inbound audio/video before decrypt/decode, while PCMU KATs pin 480-byte/60 ms input to 960-sample/16 kHz call framing. Root and command tests pass; live WhatsApp relay proof remains pending a QR-linked account and approved recipient.
+- Added the installable pure-Go `meowcaller pair` and `meowcaller notify` commands for explicit terminal-only linked-device QR setup and one-shot WAV/MP3/Ogg-Opus or raw 8 kHz G.711 PCMU calls, with a user-private cross-platform SQLite store, 45-second answer and 5-minute playback limits (`0` explicitly disables either), EOF hangup, warning-only default logs, no diagnostics, and no mic/speaker/video dependency; calls without a receive sink now discard inbound audio/video before decrypt/decode, while PCMU KATs pin 480-byte/60 ms input to 960-sample/16 kHz call framing. Root and command tests pass; live WhatsApp relay proof remains pending a QR-linked account and approved recipient.
 
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
