@@ -50,7 +50,7 @@ func runPair(ctx context.Context, cfg pairConfig, stderr io.Writer) error {
 		return err
 	}
 	defer session.Close()
-	if err := session.Connect(ctx, stderr, true); err != nil {
+	if err := session.Pair(ctx, stderr); err != nil {
 		return err
 	}
 	fmt.Fprintln(stderr, "MeowCaller linked device ready")

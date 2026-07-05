@@ -15,6 +15,7 @@ import (
 	"time"
 
 	meowcaller "github.com/purpshell/meowcaller"
+	"github.com/rs/zerolog"
 )
 
 func TestOpenAudioSourceRoutesOggToOpusDecoder(t *testing.T) {
@@ -128,6 +129,23 @@ func TestPrepareStorePathRejectsSharedDirectoryAndSymlink(t *testing.T) {
 	}
 	if err := prepareStorePath(link); err == nil || !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("symlink error = %v, want regular-file rejection", err)
+	}
+}
+
+func TestConnectPairedRequiresExplicitPairCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod private dir: %v", err)
+	}
+	session, err := openSession(context.Background(), filepath.Join(dir, "session.db"), zerolog.Nop())
+	if err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	defer session.Close()
+
+	err = session.ConnectPaired(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "meowcaller pair") {
+		t.Fatalf("ConnectPaired error = %v, want explicit pair instruction", err)
 	}
 }
 

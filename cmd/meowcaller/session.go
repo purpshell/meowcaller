@@ -107,10 +107,18 @@ func sqliteDSN(path string) string {
 	return (&url.URL{Scheme: "file", Path: urlPath, RawQuery: query.Encode()}).String()
 }
 
-func (s *linkedSession) Connect(ctx context.Context, qrOut io.Writer, allowQR bool) error {
+func (s *linkedSession) ConnectPaired(ctx context.Context) error {
+	return s.connect(ctx, io.Discard, false)
+}
+
+func (s *linkedSession) Pair(ctx context.Context, qrOut io.Writer) error {
+	return s.connect(ctx, qrOut, true)
+}
+
+func (s *linkedSession) connect(ctx context.Context, qrOut io.Writer, allowQR bool) error {
 	if s.client.Store.ID == nil {
 		if !allowQR {
-			return errors.New("linked device not paired; rerun notify in an interactive terminal and scan the QR code")
+			return errors.New("linked device not paired; run meowcaller pair with the same --store path in an interactive terminal first")
 		}
 		qr, err := s.client.GetQRChannel(ctx)
 		if err != nil {

@@ -24,6 +24,6 @@ Flags:
 - `--answer-timeout DURATION`: maximum ringing time; default `45s`, `0` disables.
 - `--max-duration DURATION`: maximum playback after answer; default `5m`, `0` streams until EOF.
 
-Pairing is an explicit terminal step so the QR never enters service logs. `notify` refuses an
-unpaired store when run headlessly. The command does not offer diagnostic capture and defaults
+Pairing is an explicit terminal step so the QR never enters service logs. `notify` never pairs
+and refuses an unpaired store. The command does not offer diagnostic capture and defaults
 to warning-only structured logs; `MEOW_LOG_LEVEL` opts into a different level.

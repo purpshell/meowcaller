@@ -14,7 +14,6 @@ import (
 
 	meowcaller "github.com/purpshell/meowcaller"
 	"github.com/rs/zerolog"
-	"golang.org/x/term"
 )
 
 const (
@@ -83,11 +82,7 @@ func runNotify(ctx context.Context, cfg notifyConfig, stderr io.Writer) error {
 	defer session.Close()
 
 	client := meowcaller.NewClient(session.client, meowcaller.WithLogger(*log))
-	allowQR := false
-	if terminal, ok := stderr.(*os.File); ok {
-		allowQR = term.IsTerminal(int(terminal.Fd()))
-	}
-	if err := session.Connect(ctx, stderr, allowQR); err != nil {
+	if err := session.ConnectPaired(ctx); err != nil {
 		return err
 	}
 
