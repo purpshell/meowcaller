@@ -328,6 +328,21 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 
 	buf := make([]byte, 1500)
 	var rtpIn, rtpSeen, unprotectFail, vidIn uint64
+	mediaReady := false
+	markMediaReady := func(message string) {
+		if mediaReady {
+			return
+		}
+		mediaReady = true
+		log.Info().Msg(message)
+		e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_in", "call_id": callID})
+		if call != nil {
+			call.setPhase(CallPhaseActive)
+			if fn := call.onReadyFn(); fn != nil {
+				fn()
+			}
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -354,7 +369,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
 					e.c.diag.Emit("stun", map[string]any{
-						"event": "binding_request_answered",
+						"event":     "binding_request_answered",
 						"tx_id_hex": hex.EncodeToString(tx[:]), "resp_hex": hex.EncodeToString(resp),
 					})
 				}
@@ -364,32 +379,44 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		if rtpSeen++; rtpSeen == 1 {
 			log.Info().Int("bytes", n).Msg("first RTP-classified packet from relay, relay is bridging the peer's media")
 		}
+		relayHeader, headerOK := rtp.ParseRtpHeader(pkt)
+		if !headerOK {
+			continue
+		}
 		// Demux: H.264 (PT 97) is the peer's video; route it to the video pipeline and
 		// reassemble Annex-B access units, emitting each on the RTP marker bit. Anything else
 		// is audio. Ported from WaCalls callmanager_video.handleVideoRelayData.
 		// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_video.go#L86-L126
-		if vh, vok := rtp.ParseRtpHeader(pkt); vok && vh.PayloadType == rtp.RtpPayloadTypeH264 {
+		if relayHeader.PayloadType == rtp.RtpPayloadTypeH264 {
+			if callVideoSink(call) == nil {
+				continue
+			}
 			_, vpayload, vunok := rxVideoPipe.UnprotectAudio(pkt)
 			if !vunok {
-				e.c.diag.Emit("video", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "seq": vh.SequenceNumber})
+				e.c.diag.Emit("video", map[string]any{"event": "unprotect_failed", "ssrc": relayHeader.Ssrc, "seq": relayHeader.SequenceNumber})
 				continue
 			}
 			for _, nalu := range videoDepack.Depacketize(vpayload) {
 				videoAU = append(videoAU, 0x00, 0x00, 0x00, 0x01)
 				videoAU = append(videoAU, nalu...)
 			}
-			if vh.Marker && len(videoAU) > 0 {
+			if relayHeader.Marker && len(videoAU) > 0 {
 				frame := videoAU
 				videoAU = nil
-				e.c.diag.Emit("video", map[string]any{"event": "frame", "ssrc": vh.Ssrc, "bytes": len(frame)})
+				e.c.diag.Emit("video", map[string]any{"event": "frame", "ssrc": relayHeader.Ssrc, "bytes": len(frame)})
 				if sink := callVideoSink(call); sink != nil {
 					_ = sink.WriteVideo(frame)
 				}
 			}
 			if vidIn++; vidIn == 1 {
-				log.Info().Uint32("ssrc", vh.Ssrc).Msg("first video RTP demuxed from relay (NOT VALIDATED)")
-				e.c.diag.Emit("meta", map[string]any{"event": "first_video_rtp_in", "call_id": callID, "ssrc": vh.Ssrc})
+				log.Info().Uint32("ssrc", relayHeader.Ssrc).Msg("first video RTP demuxed from relay (NOT VALIDATED)")
+				e.c.diag.Emit("meta", map[string]any{"event": "first_video_rtp_in", "call_id": callID, "ssrc": relayHeader.Ssrc})
 			}
+			continue
+		}
+		_, sink := callPlayerSink(call)
+		if sink == nil {
+			markMediaReady("first audio RTP received; inbound decode disabled because no sink is attached")
 			continue
 		}
 		hdr, payload, ok := rxPipe.UnprotectAudio(pkt)
@@ -413,18 +440,9 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			"seq": hdr.SequenceNumber, "samples": len(frame),
 			"pcm_rms": rmsFloat32(frame), "payload_len": len(payload),
 		})
-		if _, sink := callPlayerSink(call); sink != nil {
-			_ = sink.WriteFrame(frame)
-		}
+		_ = sink.WriteFrame(frame)
 		if rtpIn++; rtpIn == 1 {
-			log.Info().Msg("first RTP decoded from relay, inbound audio flowing")
-			e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_in", "call_id": callID})
-			if call != nil {
-				call.setPhase(CallPhaseActive)
-				if fn := call.onReadyFn(); fn != nil {
-					fn()
-				}
-			}
+			markMediaReady("first RTP decoded from relay, inbound audio flowing")
 		}
 	}
 }

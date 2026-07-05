@@ -162,6 +162,16 @@ func WAVFile(path string) (AudioSource, error) {
 	return fs, nil
 }
 
+// MuLawFile streams a raw 8-bit G.711 PCMU file at 8 kHz mono as 16 kHz mono
+// FrameSamples frames.
+func MuLawFile(path string) (AudioSource, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return MuLawStream(f), nil
+}
+
 // wavMono collapses interleaved s16le PCM to mono float32 by averaging channels.
 func wavMono(b []byte, channels int) []float32 {
 	frames := len(b) / (channels * 2)

@@ -77,7 +77,8 @@ func (c *Call) Play(src AudioSource) *Player {
 }
 
 // Receive attaches a sink for the peer's decoded audio (16 kHz mono frames), replacing
-// any previous one. Without a sink the inbound audio is decoded and discarded.
+// any previous one. Without a sink inbound audio packets are discarded before decrypt
+// and decode.
 func (c *Call) Receive(sink AudioSink) {
 	c.mu.Lock()
 	c.sink = sink
