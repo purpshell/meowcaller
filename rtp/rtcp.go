@@ -11,28 +11,27 @@ import (
 
 const (
 	RtcpPtSr         uint8 = 200
+	RtcpPtSdes       uint8 = 202
+	RtcpPtPsfb       uint8 = 206
 	RtcpPtWaCompact  uint8 = 208
 	RtcpPtWaCompact2 uint8 = 209
 	RtcpHeaderLen    int   = 8
 	SrtcpTrailerLen  int   = 14
 
-	ntpUnixOffsetSecs uint64 = 2208988800
+	ntpUnixOffsetSecs    uint64 = 2208988800
+	WhatsappRtcpCnameLen        = 18
 )
 
 // IsRtcpPacket reports whether data is an RTCP packet (vs a WhatsApp RTP packet).
 func IsRtcpPacket(data []byte) bool {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/rtcp.rs#L16-L28
-	if len(data) < RtcpHeaderLen+SrtcpTrailerLen {
+	if len(data) < RtcpHeaderLen {
 		return false
 	}
 	if (data[0]>>6)&0x03 != 2 {
 		return false
 	}
-	// WhatsApp RTP uses X=1 (byte0 0x90) and a 7-bit PT in byte1; RTCP uses the full byte1 as PT.
-	if data[0]&0x10 != 0 && data[1]&0x7f == RtpPayloadTypeOpus {
-		return false
-	}
-	return data[1] >= 64
+	return data[1] >= 192 && data[1] <= 223
 }
 
 // RtcpPayloadType returns the RTCP payload type; ok=false if not an RTCP packet.
@@ -111,4 +110,91 @@ func BuildSenderReport(localSsrc uint32, stats *RtcpSenderStats, nowMs uint64, l
 	lg := pickLog(log)
 	lg.Trace().Uint32("local_ssrc", localSsrc).Uint32("rtp_timestamp", stats.RtpTimestamp).Uint32("packets_sent", stats.PacketsSent).Uint32("octets_sent", stats.OctetsSent).Msg("built rtcp sender report")
 	return buf
+}
+
+// BuildWhatsappRtcpCname builds the native 18-byte randomized CNAME shape.
+func BuildWhatsappRtcpCname(entropy [12]byte) [WhatsappRtcpCnameLen]byte {
+	const hexChars = "0123456789abcdef"
+	var randomHex [11]byte
+	for nibble := range randomHex {
+		b := entropy[6+nibble/2]
+		if nibble&1 == 0 {
+			randomHex[nibble] = hexChars[b>>4]
+		} else {
+			randomHex[nibble] = hexChars[b&0x0f]
+		}
+	}
+	var cname [WhatsappRtcpCnameLen]byte
+	copy(cname[:5], randomHex[:5])
+	copy(cname[5:8], "@pj")
+	copy(cname[8:14], randomHex[5:])
+	copy(cname[14:], ".org")
+	return cname
+}
+
+// BuildSourceDescription builds WhatsApp's one-chunk SDES packet.
+func BuildSourceDescription(localSsrc uint32, cname *[WhatsappRtcpCnameLen]byte, profileExtension bool) [32]byte {
+	var packet [32]byte
+	packet[0] = 0x81
+	if profileExtension {
+		packet[0] |= 0x10
+	}
+	packet[1] = RtcpPtSdes
+	binary.BigEndian.PutUint16(packet[2:4], 7)
+	binary.BigEndian.PutUint32(packet[4:8], localSsrc)
+	packet[8] = 1
+	packet[9] = WhatsappRtcpCnameLen
+	copy(packet[10:28], cname[:])
+	return packet
+}
+
+// BuildSenderReportWithSdes builds WhatsApp's periodic compound SR+SDES packet.
+func BuildSenderReportWithSdes(localSsrc uint32, stats *RtcpSenderStats, nowMs uint64, cname *[WhatsappRtcpCnameLen]byte, profileExtension bool) []byte {
+	sr := BuildSenderReport(localSsrc, stats, nowMs)
+	if profileExtension {
+		sr[0] |= 0x10
+	}
+	sdes := BuildSourceDescription(localSsrc, cname, profileExtension)
+	out := make([]byte, 0, len(sr)+len(sdes))
+	out = append(out, sr[:]...)
+	out = append(out, sdes[:]...)
+	return out
+}
+
+// RtcpRequestsKeyframe reports whether a compound RTCP packet contains PLI/FIR
+// feedback for localVideoSsrc.
+func RtcpRequestsKeyframe(data []byte, localVideoSsrc uint32) bool {
+	for offset := 0; offset+4 <= len(data); {
+		if (data[offset]>>6)&0x03 != 2 {
+			return false
+		}
+		packetLen := (int(binary.BigEndian.Uint16(data[offset+2:offset+4])) + 1) * 4
+		if packetLen < 8 || offset+packetLen > len(data) {
+			return false
+		}
+		packet := data[offset : offset+packetLen]
+		if packet[1] == RtcpPtPsfb && len(packet) >= 12 {
+			rawFmt := packet[0] & 0x1f
+			fmt := rawFmt
+			if rawFmt&0x10 != 0 {
+				fmt &= 0x0f
+			}
+			mediaSsrc := binary.BigEndian.Uint32(packet[8:12])
+			if fmt == 1 && mediaSsrc == localVideoSsrc {
+				return true
+			}
+			if fmt == 4 {
+				if mediaSsrc == localVideoSsrc {
+					return true
+				}
+				for fci := packet[12:]; len(fci) >= 8; fci = fci[8:] {
+					if binary.BigEndian.Uint32(fci[:4]) == localVideoSsrc {
+						return true
+					}
+				}
+			}
+		}
+		offset += packetLen
+	}
+	return false
 }

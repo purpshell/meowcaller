@@ -14,11 +14,12 @@ type rtpKat struct {
 		Payload string `json:"payload"`
 	} `json:"inputs"`
 	Rtp struct {
-		SpeechHeader16   string `json:"speechHeader16"`
-		DtxHeader20      string `json:"dtxHeader20"`
-		EstimateSpeech12 uint64 `json:"estimateSpeech12"`
-		EstimateDtx1     uint64 `json:"estimateDtx1"`
-		EstimatePriming2 uint64 `json:"estimatePriming2"`
+		SpeechHeader16       string `json:"speechHeader16"`
+		DtxHeader20          string `json:"dtxHeader20"`
+		AndroidVideoHeader28 string `json:"androidVideoHeader28"`
+		EstimateSpeech12     uint64 `json:"estimateSpeech12"`
+		EstimateDtx1         uint64 `json:"estimateDtx1"`
+		EstimatePriming2     uint64 `json:"estimatePriming2"`
 	} `json:"rtp"`
 	Rtcp struct {
 		NowMs      uint64 `json:"nowMs"`
@@ -81,6 +82,57 @@ func TestParseRoundTripsFixedFields(t *testing.T) {
 	got, ok := ParseRtpHeader(b)
 	if !ok || got != h {
 		t.Errorf("ParseRtpHeader = (%+v, %v), want (%+v, true)", got, ok, h)
+	}
+}
+
+func TestVideoHeaderMatchesAndroidCapture(t *testing.T) {
+	k := loadKat(t)
+	header := RtpHeader{
+		Marker:         true,
+		PayloadType:    RtpPayloadTypeH264,
+		SequenceNumber: 1,
+		Timestamp:      114120,
+		Ssrc:           0x49c5fb8c,
+		VideoExtension: &VideoRtpExtension{
+			MediaFrameInfo:    VideoMediaFrameInfoIDR,
+			InitialBandwidth:  0,
+			ShortOffset:       29,
+			TransportSequence: 0x0c3f,
+		},
+	}
+	if got := hex.EncodeToString(EncodeRtpHeader(&header)); got != k.Rtp.AndroidVideoHeader28 {
+		t.Errorf("androidVideoHeader28 = %s, want %s", got, k.Rtp.AndroidVideoHeader28)
+	}
+	if n, ok := RtpHeaderByteLength(EncodeRtpHeader(&header)); !ok || n != WhatsappVideoRtpHeaderSize {
+		t.Errorf("video header length = (%d, %v), want (%d, true)", n, ok, WhatsappVideoRtpHeaderSize)
+	}
+}
+
+func TestVideoStreamUsesOneTimestampPerAccessUnit(t *testing.T) {
+	stream := NewVideoRtpStream(0x11223344, 4500)
+	first := stream.NextPacket(false, VideoMediaFrameInfoIDR)
+	second := stream.NextPacket(true, VideoMediaFrameInfoIDR)
+	third := stream.NextPacket(true, VideoMediaFrameInfoDelta)
+
+	if first.Timestamp != 0 || second.Timestamp != 0 || third.Timestamp != 4500 {
+		t.Errorf("timestamps = (%d, %d, %d), want (0, 0, 4500)", first.Timestamp, second.Timestamp, third.Timestamp)
+	}
+	if first.Marker || !second.Marker || !third.Marker {
+		t.Errorf("markers = (%v, %v, %v), want (false, true, true)", first.Marker, second.Marker, third.Marker)
+	}
+	if first.VideoExtension == nil || second.VideoExtension == nil || third.VideoExtension == nil {
+		t.Fatal("video extension missing")
+	}
+	if first.VideoExtension.TransportSequence != 0 ||
+		second.VideoExtension.TransportSequence != 1 ||
+		third.VideoExtension.TransportSequence != 2 {
+		t.Errorf("transport sequences = (%d, %d, %d), want (0, 1, 2)",
+			first.VideoExtension.TransportSequence,
+			second.VideoExtension.TransportSequence,
+			third.VideoExtension.TransportSequence)
+	}
+	if stream.RtpTimestamp() != 4500 {
+		t.Errorf("last RTP timestamp = %d, want 4500", stream.RtpTimestamp())
 	}
 }
 
@@ -162,6 +214,35 @@ func TestSenderReportMatchesKAT(t *testing.T) {
 	}
 }
 
+func TestWhatsappVideoSenderReportCarriesProfileAndSdes(t *testing.T) {
+	cname := BuildWhatsappRtcpCname([12]byte{0, 1, 2, 3, 4, 5, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb})
+	if string(cname[:]) != "66778@pj899aab.org" {
+		t.Fatalf("cname = %q", cname)
+	}
+	stats := RtcpSenderStats{PacketsSent: 3, OctetsSent: 400, RtpTimestamp: 90000}
+	compound := BuildSenderReportWithSdes(0x11112222, &stats, 1700000000000, &cname, true)
+	if len(compound) != 60 {
+		t.Fatalf("compound length = %d, want 60", len(compound))
+	}
+	if compound[0] != 0x90 || compound[1] != RtcpPtSr {
+		t.Errorf("video SR header = %x, want 90c8", compound[:2])
+	}
+	if compound[28] != 0x91 || compound[29] != RtcpPtSdes {
+		t.Errorf("video SDES header = %x, want 91ca", compound[28:30])
+	}
+}
+
+func TestRtcpRequestsVideoKeyframe(t *testing.T) {
+	const localVideo = 0x55556666
+	pli := []byte{0x91, RtcpPtPsfb, 0, 2, 0x11, 0x11, 0x22, 0x22, 0x55, 0x55, 0x66, 0x66}
+	if !RtcpRequestsKeyframe(pli, localVideo) {
+		t.Fatal("PLI for local video SSRC was not recognized")
+	}
+	if RtcpRequestsKeyframe(pli, 0x99990000) {
+		t.Fatal("PLI for another SSRC was accepted")
+	}
+}
+
 // TestRtcpClassification checks the RTCP/RTP discriminator.
 func TestRtcpClassification(t *testing.T) {
 	k := loadKat(t)
@@ -177,5 +258,10 @@ func TestRtcpClassification(t *testing.T) {
 	copy(padded, rtpHdr)
 	if IsRtcpPacket(padded) {
 		t.Error("RTP speech header must not classify as RTCP")
+	}
+	video := make([]byte, 28+20)
+	video[0], video[1] = 0x90, 0xe1
+	if IsRtcpPacket(video) {
+		t.Error("marker-set H.264 RTP must not classify as RTCP")
 	}
 }

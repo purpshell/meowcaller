@@ -14,6 +14,16 @@ const (
 	maxFuReassemblyBytes = 4 << 20
 )
 
+// AUHasIDR reports whether an Annex-B access unit contains an IDR NAL unit.
+func AUHasIDR(au []byte) bool {
+	for _, nalu := range SplitAnnexB(au) {
+		if len(nalu) > 0 && nalu[0]&0x1f == 5 {
+			return true
+		}
+	}
+	return false
+}
+
 // PackageH264NALU splits one NAL unit into RTP payloads: a single payload when it fits
 // the MTU budget, else FU-A fragments.
 func PackageH264NALU(nalu []byte) [][]byte {

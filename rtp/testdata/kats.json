@@ -55,6 +55,7 @@
   "rtp": {
     "speechHeader16": "90f800010000000012345678debe0000",
     "dtxHeader20": "907800020000014012345678debe000130010000",
+    "androidVideoHeader28": "90e100010001bdc849c5fb8cdebe0003300951000061001d910c3f00",
     "estimateSpeech12": 32,
     "estimateDtx1": 25,
     "estimatePriming2": 25
