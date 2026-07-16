@@ -15,6 +15,7 @@ import (
 	"github.com/purpshell/meowcaller/mlow"
 	"github.com/purpshell/meowcaller/relay"
 	"github.com/purpshell/meowcaller/rtp"
+	"github.com/purpshell/meowcaller/srtp"
 	"github.com/purpshell/meowcaller/stun"
 	"github.com/rs/zerolog"
 )
@@ -186,6 +187,14 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
+	audioRtcp, err := newMediaSrtcpSender(callKey, selfLID, ssrc, false)
+	if err != nil {
+		return err
+	}
+	peerRtcpKeys, err := srtp.DeriveE2eSrtcpKeys(callKey, rtp.FormatE2ESrtpParticipantID(peerLID), log)
+	if err != nil {
+		return err
+	}
 	rxPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, ssrc, FrameSamples, WithLogger(log))
 	if err != nil {
 		return err
@@ -319,7 +328,15 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
-	vsender := &videoSender{pipe: txVideoPipe, ch: ch, ssrc: videoSelfSsrc, callID: callID, log: log, diag: e.c.diag}
+	videoRtcp, err := newMediaSrtcpSender(callKey, selfLID, videoSelfSsrc, true)
+	if err != nil {
+		return err
+	}
+	vsender := &videoSender{
+		pipe: txVideoPipe, stream: rtp.NewVideoRtpStream(videoSelfSsrc, defaultVideoRtpStepSamples),
+		ch: ch, ssrc: videoSelfSsrc, callID: callID, keyframeRequired: true,
+		log: log, diag: e.c.diag,
+	}
 	e.mu.Lock()
 	if m := e.calls[callID]; m != nil {
 		m.videoTx = vsender
@@ -336,8 +353,50 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		e.mu.Unlock()
 	}()
 
+	// WhatsApp associates the RTP streams with an SRTCP session. Periodic compound
+	// SR+SDES packets are required for the caller's video to start flowing to the
+	// answerer, and give the peer a target for PLI/FIR recovery feedback.
+	go func() {
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		var sent uint64
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				audioPacket, err := audioRtcp.senderReport(txPipe.SenderStats(), uint64(now.UnixMilli()))
+				if err != nil {
+					return
+				}
+				if _, err = ch.Send(audioPacket); err != nil {
+					return
+				}
+				videoStats := txVideoPipe.SenderStats()
+				if videoStats.PacketsSent > 0 {
+					videoPacket, err := videoRtcp.senderReport(videoStats, uint64(now.UnixMilli()))
+					if err != nil {
+						return
+					}
+					if _, err = ch.Send(videoPacket); err != nil {
+						return
+					}
+				}
+				sent++
+				if sent == 1 {
+					log.Info().Msg("started periodic SRTCP sender reports")
+				}
+				e.c.diag.Emit("rtcp", map[string]any{
+					"event": "sender_reports", "tick": sent,
+					"audio_packets": txPipe.SenderStats().PacketsSent,
+					"video_packets": videoStats.PacketsSent,
+				})
+			}
+		}
+	}()
+
 	buf := make([]byte, 1500)
-	var rtpIn, rtpSeen, unprotectFail, rtpInspect, vidIn, videoUnprotectFail, videoFrameIn, videoSinkMissing uint64
+	var rtpIn, rtpSeen, unprotectFail, rtpInspect, vidIn, videoUnprotectFail, videoFrameIn, videoSinkMissing, rtcpIn, rtcpAuthFail uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -348,12 +407,42 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		}
 		relayRx.Add(1)
 		pkt := buf[:n]
-		isRTP := relay.ClassifyRelayPacket(pkt) == relay.RelayPacketRtp
+		packetKind := relay.ClassifyRelayPacket(pkt)
+		isRTP := packetKind == relay.RelayPacketRtp
 		e.c.diag.Emit("relay", map[string]any{
 			"event": "packet_in", "bytes": n, "is_rtp": isRTP,
 			"packet_hex": hex.EncodeToString(pkt),
 		})
-		if !isRTP {
+		switch packetKind {
+		case relay.RelayPacketRtcp:
+			senderSsrc, ok := rtp.ParseRtcpSenderSsrc(pkt)
+			if !ok {
+				continue
+			}
+			plain, index, ok := srtp.UnprotectSrtcp(&peerRtcpKeys, senderSsrc, pkt)
+			if !ok {
+				if rtcpAuthFail++; rtcpAuthFail == 1 {
+					log.Warn().Uint32("ssrc", senderSsrc).Msg("peer SRTCP failed authentication")
+				}
+				e.c.diag.Emit("rtcp", map[string]any{
+					"event": "auth_failed", "ssrc": senderSsrc, "bytes": n,
+				})
+				continue
+			}
+			if rtcpIn++; rtcpIn == 1 {
+				log.Info().Uint32("ssrc", senderSsrc).Uint32("index", index).Msg("first authenticated peer SRTCP received")
+			}
+			keyframe := rtp.RtcpRequestsKeyframe(plain, videoSelfSsrc)
+			if keyframe {
+				vsender.requestKeyframe()
+				log.Debug().Uint32("video_ssrc", videoSelfSsrc).Msg("peer requested a video keyframe")
+			}
+			e.c.diag.Emit("rtcp", map[string]any{
+				"event": "in", "ssrc": senderSsrc, "index": index,
+				"plain_hex": hex.EncodeToString(plain), "requests_keyframe": keyframe,
+			})
+			continue
+		case relay.RelayPacketStun:
 			mt, isStun := stun.StunMessageType(pkt)
 			if isStun && mt == stun.MsgBindingRequest {
 				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
@@ -369,6 +458,8 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 					})
 				}
 			}
+			continue
+		case relay.RelayPacketOther:
 			continue
 		}
 		if rtpSeen++; rtpSeen == 1 {
@@ -509,18 +600,97 @@ func videoRtpDurationSamples(duration time.Duration) uint32 {
 //
 // NOT VALIDATED: the video send media path is unproven.
 type videoSender struct {
+	mu               sync.Mutex
+	pipe             *MediaPipeline
+	stream           *rtp.VideoRtpStream
+	ch               *relay.RelayMediaChannel
+	ssrc             uint32
+	callID           string
+	frame            uint64
+	logged           bool
+	keyframeRequired bool
+	log              zerolog.Logger
+	diag             *diag.Recorder
+}
+
+type mediaSrtcpSender struct {
 	mu      sync.Mutex
-	pipe    *MediaPipeline
-	ch      *relay.RelayMediaChannel
+	keys    srtp.E2eSrtpKeys
 	ssrc    uint32
-	callID  string
-	seq     uint16
-	ts      uint32
-	frame   uint64
-	started bool
-	logged  bool
-	log     zerolog.Logger
-	diag    *diag.Recorder
+	cname   [rtp.WhatsappRtcpCnameLen]byte
+	profile bool
+	index   uint32
+}
+
+func newMediaSrtcpSender(callKey []byte, selfLID string, ssrc uint32, profile bool) (*mediaSrtcpSender, error) {
+	keys, err := srtp.DeriveE2eSrtcpKeys(callKey, rtp.FormatE2ESrtpParticipantID(selfLID))
+	if err != nil {
+		return nil, err
+	}
+	var entropy [12]byte
+	_, _ = rand.Read(entropy[:])
+	return &mediaSrtcpSender{
+		keys: keys, ssrc: ssrc, cname: rtp.BuildWhatsappRtcpCname(entropy),
+		profile: profile, index: 1,
+	}, nil
+}
+
+func (s *mediaSrtcpSender) senderReport(stats rtp.RtcpSenderStats, nowMs uint64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	plain := rtp.BuildSenderReportWithSdes(s.ssrc, &stats, nowMs, &s.cname, s.profile)
+	packet, err := srtp.ProtectSrtcp(&s.keys, s.ssrc, s.index, plain)
+	if err == nil {
+		s.index++
+	}
+	return packet, err
+}
+
+func (vs *videoSender) protectAccessUnit(au []byte, duration time.Duration) [][]byte {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	return vs.protectAccessUnitLocked(au, duration)
+}
+
+func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration) [][]byte {
+	idr := rtp.AUHasIDR(au)
+	if vs.keyframeRequired && !idr {
+		return nil
+	}
+	nalus := rtp.SplitAnnexB(au)
+	var payloads [][]byte
+	for _, n := range nalus {
+		if len(n) == 0 || n[0]&0x1f == 9 {
+			continue
+		}
+		payloads = append(payloads, rtp.PackageH264NALU(n)...)
+	}
+	if len(payloads) == 0 {
+		return nil
+	}
+	vs.stream.SetTimestampStride(videoRtpDurationSamples(duration))
+	mediaFrameInfo := rtp.VideoMediaFrameInfoDelta
+	if idr {
+		mediaFrameInfo = rtp.VideoMediaFrameInfoIDR
+	}
+	packets := make([][]byte, 0, len(payloads))
+	for i, payload := range payloads {
+		header := vs.stream.NextPacket(i == len(payloads)-1, mediaFrameInfo)
+		packet, err := vs.pipe.ProtectRTP(&header, payload)
+		if err == nil {
+			packets = append(packets, packet)
+		}
+	}
+	if len(packets) > 0 && idr {
+		vs.keyframeRequired = false
+	}
+	return packets
+}
+
+func (vs *videoSender) requestKeyframe() {
+	vs.mu.Lock()
+	vs.keyframeRequired = true
+	vs.mu.Unlock()
 }
 
 // send fragments one Annex-B access unit into PT-97 RTP packets (marker on the last) and
@@ -529,39 +699,18 @@ func (vs *videoSender) send(au []byte, duration time.Duration) {
 	if vs == nil || len(au) == 0 {
 		return
 	}
-	nalus := rtp.SplitAnnexB(au)
-	if len(nalus) == 0 {
-		return
-	}
-	var payloads [][]byte
-	for _, n := range nalus {
-		payloads = append(payloads, rtp.PackageH264NALU(n)...)
-	}
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	if vs.ch == nil {
 		return
 	}
-	durationSamples := videoRtpDurationSamples(duration)
-	if vs.started {
-		vs.ts += durationSamples
+	packets := vs.protectAccessUnitLocked(au, duration)
+	if len(packets) == 0 {
+		return
 	}
-	vs.started = true
 	sent := 0
 	wireBytes := 0
-	for i, p := range payloads {
-		hdr := rtp.RtpHeader{
-			PayloadType:    rtp.RtpPayloadTypeH264,
-			SequenceNumber: vs.seq,
-			Timestamp:      vs.ts,
-			Ssrc:           vs.ssrc,
-			Marker:         i == len(payloads)-1,
-		}
-		vs.seq++
-		pkt, err := vs.pipe.ProtectRTP(&hdr, p)
-		if err != nil {
-			continue
-		}
+	for _, pkt := range packets {
 		if _, err := vs.ch.Send(pkt); err != nil {
 			return
 		}
@@ -574,10 +723,10 @@ func (vs *videoSender) send(au []byte, duration time.Duration) {
 		if frame < 10 || frame%30 == 0 {
 			vs.diag.Emit("video_out", map[string]any{
 				"event": "frame", "call_id": vs.callID, "frame": frame,
-				"ssrc": vs.ssrc, "rtp_ts": vs.ts, "nalus": len(nalus),
-				"payloads": len(payloads), "packets": sent, "access_unit_bytes": len(au),
+				"ssrc": vs.ssrc, "rtp_ts": vs.pipe.SenderStats().RtpTimestamp,
+				"packets": sent, "access_unit_bytes": len(au),
 				"wire_bytes": wireBytes, "duration_ms": duration.Milliseconds(),
-				"duration_samples": durationSamples,
+				"duration_samples": videoRtpDurationSamples(duration),
 			})
 		}
 	}
@@ -585,7 +734,6 @@ func (vs *videoSender) send(au []byte, duration time.Duration) {
 		vs.logged = true
 		vs.log.Info().
 			Int("packets", sent).
-			Int("nalus", len(nalus)).
 			Uint32("ssrc", vs.ssrc).
 			Msg("first video RTP sent to relay, outbound video flowing")
 	}
