@@ -41,8 +41,9 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	if !ok {
 		t.Fatalf("video offer capability content = %T, want []byte", capability.Content)
 	}
-	if !bytes.Equal(gotCapability, CapabilityVideoOffer) {
-		t.Errorf("video offer capability = %x, want %x", gotCapability, CapabilityVideoOffer)
+	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xfa, 0x13}
+	if !bytes.Equal(gotCapability, wantCapability) {
+		t.Errorf("video offer capability = %x, want %x", gotCapability, wantCapability)
 	}
 }
 
