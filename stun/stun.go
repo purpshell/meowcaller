@@ -177,17 +177,69 @@ func createWasmRelayEndpointAttr(endpointXor [6]byte) [8]byte {
 // BuildWasmStunAllocateRequest builds the WASM/Web DataChannel Allocate: 0x4000
 // token + 0x4024 stream desc + 0x0016 endpoint + MI, no FP.
 func BuildWasmStunAllocateRequest(transactionID [12]byte, relayToken []byte, endpointXor [6]byte, integrityKey []byte, log ...zerolog.Logger) []byte {
+	return buildWasmStunAllocateRequest(transactionID, relayToken, endpointXor, wasmStreamDescriptorsTemplate, integrityKey, log...)
+}
+
+// BuildWasmStunAllocateRequestWithStreamSsrcs builds the WASM/Web allocate with
+// per-call stream descriptors. The static KAT template only proves the wire shape; live
+// calls must carry the SSRCs derived from the current call ID and participant LID.
+func BuildWasmStunAllocateRequestWithStreamSsrcs(transactionID [12]byte, relayToken []byte, endpointXor [6]byte, streamSsrcs [9]uint32, integrityKey []byte, log ...zerolog.Logger) []byte {
+	return buildWasmStunAllocateRequest(transactionID, relayToken, endpointXor, CreateWasmStreamDescriptors(streamSsrcs), integrityKey, log...)
+}
+
+func buildWasmStunAllocateRequest(transactionID [12]byte, relayToken []byte, endpointXor [6]byte, streamDescriptors []byte, integrityKey []byte, log ...zerolog.Logger) []byte {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stun.rs#L155-L177
 	lg := pickLog(log)
 	lg.Debug().
 		Int("relay_token_bytes", len(relayToken)).
+		Int("stream_descriptor_bytes", len(streamDescriptors)).
 		Bool("message_integrity", integrityKey != nil).
 		Msg("building wasm allocate request")
 	attrs := stunAttr(attrRelayToken, relayToken)
-	attrs = append(attrs, stunAttr(attrStreamDescriptors, wasmStreamDescriptorsTemplate)...)
+	attrs = append(attrs, stunAttr(attrStreamDescriptors, streamDescriptors)...)
 	wep := createWasmRelayEndpointAttr(endpointXor)
 	attrs = append(attrs, stunAttr(attrWasmRelayEndpoint, wep[:])...)
 	return EncodeStunRequest(MsgAllocateRequest, transactionID, attrs, integrityKey, false, lg)
+}
+
+var wasmStreamDescriptorPlan = [9]struct {
+	participant uint32
+	layer       uint32
+}{
+	{0, 0},
+	{0, 1},
+	{0, 2},
+	{1, 0},
+	{1, 1},
+	{1, 2},
+	{2, 0},
+	{2, 1},
+	{2, 2},
+}
+
+// CreateWasmStreamDescriptors builds the WASM/Web attr 0x4024 protobuf payload for the
+// nine relay stream SSRCs in rtp.WasmRelayStreamSlotWords order.
+func CreateWasmStreamDescriptors(ssrcs [9]uint32) []byte {
+	var out []byte
+	for i, ssrc := range ssrcs {
+		if ssrc == 0 {
+			continue
+		}
+		plan := wasmStreamDescriptorPlan[i]
+		var inner []byte
+		if plan.participant != 0 {
+			inner = pbTag(inner, 1, 0)
+			inner = binary.AppendUvarint(inner, uint64(plan.participant))
+		}
+		if plan.layer != 0 {
+			inner = pbTag(inner, 2, 0)
+			inner = binary.AppendUvarint(inner, uint64(plan.layer))
+		}
+		inner = pbTag(inner, 3, 0)
+		inner = binary.AppendUvarint(inner, uint64(ssrc))
+		out = pbLenDelim(out, 1, inner)
+	}
+	return out
 }
 
 // BuildWhatsappPing builds the WhatsApp consent ping (type 0x0801, empty body).

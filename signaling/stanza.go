@@ -1,6 +1,7 @@
 package signaling
 
 import (
+	"bytes"
 	"strconv"
 
 	"github.com/rs/zerolog"
@@ -15,6 +16,9 @@ import (
 
 // CapabilityOffer is the capability blob for <offer>/<accept> (ver=1).
 var CapabilityOffer = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x13}
+
+// CapabilityVideoOffer is the capability blob observed in WhatsApp video offers.
+var CapabilityVideoOffer = []byte{0x01, 0x05, 0xff, 0x09, 0xe0, 0xfa, 0x1b}
 
 // CapabilityPreaccept is the capability blob for <preaccept> (ver=1).
 var CapabilityPreaccept = []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
@@ -66,8 +70,9 @@ func BuildOffer(p *OfferParams, log ...zerolog.Logger) waBinary.Node {
 		children = append(children, videoOfferNode())
 	}
 	children = append(children, waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}})
-	if p.Capability != nil {
-		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
+	capability := offerCapability(p.Video, p.Capability)
+	if capability != nil {
+		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capability})
 	}
 	if len(p.DeviceKeys) > 1 {
 		lg.Trace().Int("device_keys", len(p.DeviceKeys)).Msg("offer: multi-device, using destination")
@@ -85,6 +90,13 @@ func BuildOffer(p *OfferParams, log ...zerolog.Logger) waBinary.Node {
 		children = append(children, waBinary.Node{Tag: "device-identity", Content: p.DeviceIdentity})
 	}
 	return callWrap(p.To, nil, offerAction("offer", p.CallID, p.CallCreator, children))
+}
+
+func offerCapability(video bool, capability []byte) []byte {
+	if video && bytes.Equal(capability, CapabilityOffer) {
+		return CapabilityVideoOffer
+	}
+	return capability
 }
 
 // encNode builds one <enc v=2 type=… count=0> child carrying the ciphertext.

@@ -2,6 +2,7 @@ package meowcaller
 
 import (
 	"sync"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 )
@@ -125,7 +126,16 @@ func (c *Call) onVideoStateFn() func(VideoState) {
 // is the video analog of writing a sample to a track.
 //
 // NOT VALIDATED: the video send media path is unproven.
-func (c *Call) SendVideo(accessUnit []byte) error { return c.eng.sendVideoFrame(c.id, accessUnit) }
+func (c *Call) SendVideo(accessUnit []byte) error {
+	return c.SendVideoWithDuration(accessUnit, 0)
+}
+
+// SendVideoWithDuration sends one already-encoded H.264 access unit and advances the
+// outgoing RTP timestamp by duration for the next frame. A zero duration uses the sender
+// fallback frame step.
+func (c *Call) SendVideoWithDuration(accessUnit []byte, duration time.Duration) error {
+	return c.eng.sendVideoFrame(c.id, accessUnit, duration)
+}
 
 // OnReady registers a callback fired once media is flowing (relay bound, first frames
 // exchanged).

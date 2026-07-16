@@ -8,12 +8,24 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-// Video call signaling, ported from WaCalls (jotadev66, MIT) feat/video-calls — a
-// 1:1 video call advertises an <video enc=h264 dec=h264 …> child in the <offer>/<accept>,
-// and an inbound video call is detected by the presence of that child. See README Credits.
+// Video call signaling, ported from WaCalls (jotadev66, MIT) feat/video-calls and
+// adjusted against captured WhatsApp iPhone video-call signaling. A 1:1 video call
+// advertises a <video> child in the <offer>/<accept>, and an inbound video call is
+// detected by the presence of that child. See README Credits.
 
-// VideoCodecH264 is the codec WaCalls advertises in the <video> element.
+// VideoCodecH264 is the lowercase codec token used by bridge internals.
 const VideoCodecH264 = "h264"
+
+// VideoStateDecH264 is the active standalone <video> state dec value observed in
+// WhatsApp video negotiation.
+const VideoStateDecH264 = "H264"
+
+const (
+	// Captured iPhone offers use this spelling in the initial <offer>/<accept>
+	// negotiation. The callee receipts but does not answer offers that use h264/h264.
+	videoNegotiationEncH264 = "h.264"
+	videoNegotiationDecH264 = VideoStateDecH264
+)
 
 // Observed <video> "state" values. 1 = active (video on) and 11 = mid-call upgrade (carries
 // the inline media payload); the intermediate setup values (2/4/6) are unconfirmed.
@@ -42,17 +54,21 @@ func BuildVideoState(callID string, to, callCreator types.JID, wrapperID string,
 // videoOfferNode builds the <video> advertisement for an <offer> (sits after the
 // <audio> children, before <net>).
 func videoOfferNode() waBinary.Node {
-	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/signaling/signaling_build.go#L47-L52
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-		"enc": VideoCodecH264, "dec": VideoCodecH264, "orientation": "0",
-		"screen_width": "1920", "screen_height": "1080", "device_orientation": "0",
+		"enc":                videoNegotiationEncH264,
+		"dec":                videoNegotiationDecH264,
+		"screen_width":       "1920",
+		"screen_height":      "1080",
+		"device_orientation": "0",
 	}}
 }
 
 // videoAcceptNode builds the <video> advertisement for an <accept>.
 func videoAcceptNode() waBinary.Node {
-	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/signaling/signaling_build.go#L101-L104
-	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{"enc": VideoCodecH264}}
+	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
+		"dec":                videoNegotiationDecH264,
+		"device_orientation": "0",
+	}}
 }
 
 // OfferHasVideo reports whether a parsed <offer> node advertises video — the presence of

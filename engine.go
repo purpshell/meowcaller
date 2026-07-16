@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/purpshell/meowcaller/signaling"
@@ -96,6 +97,10 @@ func (e *engine) install() {
 		switch ev := evt.(type) {
 		case *events.CallOffer:
 			e.onOffer(ev)
+		case *events.CallPreAccept:
+			e.onPreAccept(ev)
+		case *events.CallAccept:
+			e.onAccept(ev)
 		case *events.CallRelayLatency:
 			e.onRelay(ev.CallID, ev.Data)
 			e.onRelayLatency(ev)
@@ -103,6 +108,8 @@ func (e *engine) install() {
 			e.onRelay(ev.CallID, ev.Data)
 		case *events.CallTerminate:
 			e.onTerminate(ev.CallID, ev.Reason)
+		case *events.CallReject:
+			e.onReject(ev)
 		}
 	})
 }
@@ -124,7 +131,7 @@ func (e *engine) lookup(callID string) *engineCall {
 
 // sendVideoFrame packetizes one encoded H.264 access unit and sends it to the relay, if a
 // video send pipeline is live for the call.
-func (e *engine) sendVideoFrame(callID string, au []byte) error {
+func (e *engine) sendVideoFrame(callID string, au []byte, duration time.Duration) error {
 	e.mu.Lock()
 	var vs *videoSender
 	if m := e.calls[callID]; m != nil {
@@ -134,13 +141,13 @@ func (e *engine) sendVideoFrame(callID string, au []byte) error {
 	if vs == nil {
 		return errors.New("meowcaller: call has no active video media")
 	}
-	vs.send(au)
+	vs.send(au, duration)
 	return nil
 }
 
 // placeCall resolves target to a LID, builds and sends the <offer>, registers the Call,
 // and returns it; media starts when the peer answers and the relay endpoint arrives.
-func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
+func (e *engine) placeCall(ctx context.Context, target string, opts CallOptions) (*Call, error) {
 	cli := e.c.wa
 	self := cli.Store.GetLID()
 	if self.IsEmpty() {
@@ -201,6 +208,7 @@ func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
 		PrivacyToken:   privacyToken,
 		Capability:     signaling.CapabilityOffer,
 		DeviceIdentity: deviceIdentity,
+		Video:          opts.Video,
 	})
 	// The builder leaves the <call> stanza id to the I/O layer; without it the server
 	// can't route/ack the offer, so it never reaches the callee.
@@ -217,6 +225,7 @@ func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
 	m.creator = self
 	m.from = peerLID
 	m.direction = CallDirectionOutgoing
+	m.isVideo = opts.Video
 	e.mu.Unlock()
 
 	e.c.diag.Emit("keying", map[string]any{
@@ -228,8 +237,8 @@ func (e *engine) placeCall(ctx context.Context, target string) (*Call, error) {
 	if err := cli.DangerousInternals().SendNode(ctx, offer); err != nil {
 		return nil, fmt.Errorf("send offer: %w", err)
 	}
-	e.c.log.Info().Str("call_id", callID).Msg("offer sent; media starts when the relay endpoint arrives")
-	e.c.diag.Emit("meta", map[string]any{"event": "offer_sent", "call_id": callID, "peer_lid": peerLID.String(), "direction": "out"})
+	e.c.log.Info().Str("call_id", callID).Bool("video", opts.Video).Msg("offer sent; media starts when the relay endpoint arrives")
+	e.c.diag.Emit("meta", map[string]any{"event": "offer_sent", "call_id": callID, "peer_lid": peerLID.String(), "direction": "out", "video": opts.Video})
 	return call, nil
 }
 
@@ -355,6 +364,7 @@ func (e *engine) sendAccept(callID string, to, creator types.JID) {
 		e.mu.Unlock()
 		return
 	}
+	isVideo := m.isVideo
 	m.acceptPending = false
 	e.mu.Unlock()
 
@@ -362,13 +372,14 @@ func (e *engine) sendAccept(callID string, to, creator types.JID) {
 		CallID: callID, To: to, CallCreator: creator,
 		AudioRates: []string{"16000"},
 		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
+		Video:      isVideo,
 	})
 	accept.Attrs["id"] = e.c.wa.DangerousInternals().GenerateRequestID()
 	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), accept); err != nil {
 		e.c.log.Error().Err(err).Str("call_id", callID).Msg("send accept failed")
 		return
 	}
-	e.c.log.Info().Str("call_id", callID).Msg("accepted (after mute_v2)")
+	e.c.log.Info().Str("call_id", callID).Bool("video", isVideo).Msg("accepted (after mute_v2)")
 }
 
 // reject declines an inbound call.
@@ -466,6 +477,76 @@ func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 		if err := e.c.wa.DangerousInternals().SendNode(context.Background(), resp); err != nil {
 			e.c.log.Error().Err(err).Str("call_id", ev.CallID).Msg("send relaylatency failed")
 			return
+		}
+	}
+}
+
+// onPreAccept records that the peer's device received and started preparing an outgoing call.
+func (e *engine) onPreAccept(ev *events.CallPreAccept) {
+	m := e.lookup(ev.CallID)
+	if m == nil || m.direction != CallDirectionOutgoing {
+		return
+	}
+	if m.call != nil && m.call.State() == CallPhaseCalling {
+		m.call.setPhase(CallPhaseRinging)
+	}
+	e.c.log.Info().
+		Str("call_id", ev.CallID).
+		Str("from", ev.From.String()).
+		Str("platform", ev.RemotePlatform).
+		Msg("peer preaccepted outgoing call")
+	e.c.diag.Emit("meta", map[string]any{
+		"event": "peer_preaccept", "call_id": ev.CallID,
+		"from": ev.From.String(), "platform": ev.RemotePlatform,
+	})
+}
+
+// onAccept records that the peer answered an outgoing call. Media may already be running
+// from relay allocation, but inbound RTP is still what marks the call ready/active.
+func (e *engine) onAccept(ev *events.CallAccept) {
+	m := e.lookup(ev.CallID)
+	if m == nil || m.direction != CallDirectionOutgoing {
+		return
+	}
+	e.mu.Lock()
+	if current := e.calls[ev.CallID]; current != nil {
+		e.applyVoipSettingsCodec(current, ev.Data, ev.CallID)
+	}
+	e.mu.Unlock()
+	if m.call != nil && m.call.State() < CallPhaseConnecting {
+		m.call.setPhase(CallPhaseConnecting)
+	}
+	e.c.log.Info().
+		Str("call_id", ev.CallID).
+		Str("from", ev.From.String()).
+		Str("platform", ev.RemotePlatform).
+		Bool("video", m.isVideo).
+		Msg("peer accepted outgoing call")
+	e.c.diag.Emit("meta", map[string]any{
+		"event": "peer_accept", "call_id": ev.CallID,
+		"from": ev.From.String(), "platform": ev.RemotePlatform, "video": m.isVideo,
+	})
+	e.maybeStartMedia(ev.CallID)
+}
+
+// onReject tears down an outgoing call when the peer declines it.
+func (e *engine) onReject(ev *events.CallReject) {
+	m := e.lookup(ev.CallID)
+	if m == nil {
+		return
+	}
+	e.c.log.Info().
+		Str("call_id", ev.CallID).
+		Str("from", ev.From.String()).
+		Msg("peer rejected call")
+	e.c.diag.Emit("meta", map[string]any{
+		"event": "peer_reject", "call_id": ev.CallID, "from": ev.From.String(),
+	})
+	e.stopMedia(ev.CallID)
+	if m.call != nil {
+		m.call.setPhase(CallPhaseEnded)
+		if fn := m.call.onEndFn(); fn != nil {
+			fn("rejected")
 		}
 	}
 }
@@ -631,6 +712,13 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	if m == nil {
 		return
 	}
+	if state == signaling.VideoStateActive || state == signaling.VideoStateUpgrade {
+		e.mu.Lock()
+		if current := e.calls[callID]; current != nil {
+			current.isVideo = true
+		}
+		e.mu.Unlock()
+	}
 	if m.call != nil {
 		if fn := m.call.onVideoStateFn(); fn != nil {
 			fn(VideoState{
@@ -646,7 +734,7 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	// the callee never entered video mode, so it reverts to state=0 after ~5s. NOT VALIDATED.
 	if state == signaling.VideoStateUpgrade {
 		reply := signaling.BuildVideoState(callID, m.from, m.creator, e.c.wa.GenerateMessageID(),
-			signaling.VideoStateActive, 0, signaling.VideoCodecH264)
+			signaling.VideoStateActive, 0, signaling.VideoStateDecH264)
 		if err := e.c.wa.DangerousInternals().SendNode(context.Background(), reply); err != nil {
 			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("send video accept failed")
 		} else {

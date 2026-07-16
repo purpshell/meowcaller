@@ -131,6 +131,23 @@ func TestWasmAllocateAndPing(t *testing.T) {
 	}
 }
 
+func TestWasmStreamDescriptorsMatchCapturedTemplate(t *testing.T) {
+	ssrcs := [9]uint32{
+		1170300490,
+		2781599269,
+		4281963094,
+		2798104311,
+		3731645995,
+		1364979034,
+		2983933125,
+		4140589437,
+		2522729392,
+	}
+	if got := hex.EncodeToString(CreateWasmStreamDescriptors(ssrcs)); got != hex.EncodeToString(wasmStreamDescriptorsTemplate) {
+		t.Errorf("wasm stream descriptors = %s, want %s", got, hex.EncodeToString(wasmStreamDescriptorsTemplate))
+	}
+}
+
 // TestParseRoundTripsAttributes parses the minimal MI request back into attributes.
 func TestParseRoundTripsAttributes(t *testing.T) {
 	k := loadStunKat(t)
