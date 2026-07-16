@@ -24,14 +24,14 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	if !ok {
 		t.Fatal("video offer child missing")
 	}
-	if enc, _ := attrString(video, "enc"); enc != "h.264" {
-		t.Errorf("video offer enc = %q, want h.264", enc)
+	if enc, _ := attrString(video, "enc"); enc != "h264" {
+		t.Errorf("video offer enc = %q, want h264", enc)
 	}
-	if dec, _ := attrString(video, "dec"); dec != "H264" {
-		t.Errorf("video offer dec = %q, want H264", dec)
+	if dec, _ := attrString(video, "dec"); dec != "h264" {
+		t.Errorf("video offer dec = %q, want h264", dec)
 	}
-	if _, has := video.Attrs["orientation"]; has {
-		t.Error("video offer must not carry legacy orientation attr")
+	if orientation, _ := attrString(video, "orientation"); orientation != "0" {
+		t.Errorf("video offer orientation = %q, want 0", orientation)
 	}
 	capability, ok := getChild(t, offer, "capability")
 	if !ok {

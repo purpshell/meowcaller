@@ -21,10 +21,8 @@ const VideoCodecH264 = "h264"
 const VideoStateDecH264 = "H264"
 
 const (
-	// Captured iPhone offers use this spelling in the initial <offer>/<accept>
-	// negotiation. The callee receipts but does not answer offers that use h264/h264.
-	videoNegotiationEncH264 = "h.264"
-	videoNegotiationDecH264 = VideoStateDecH264
+	videoOfferEncH264 = VideoCodecH264
+	videoOfferDecH264 = VideoCodecH264
 )
 
 // Observed <video> "state" values. 1 = active (video on) and 11 = mid-call upgrade (carries
@@ -55,8 +53,9 @@ func BuildVideoState(callID string, to, callCreator types.JID, wrapperID string,
 // <audio> children, before <net>).
 func videoOfferNode() waBinary.Node {
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-		"enc":                videoNegotiationEncH264,
-		"dec":                videoNegotiationDecH264,
+		"enc":                videoOfferEncH264,
+		"dec":                videoOfferDecH264,
+		"orientation":        "0",
 		"screen_width":       "1920",
 		"screen_height":      "1080",
 		"device_orientation": "0",
@@ -66,7 +65,7 @@ func videoOfferNode() waBinary.Node {
 // videoAcceptNode builds the <video> advertisement for an <accept>.
 func videoAcceptNode() waBinary.Node {
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-		"dec":                videoNegotiationDecH264,
+		"dec":                VideoStateDecH264,
 		"device_orientation": "0",
 	}}
 }
@@ -74,7 +73,7 @@ func videoAcceptNode() waBinary.Node {
 // videoPreacceptNode advertises the callee's decoder before the final accept.
 func videoPreacceptNode() waBinary.Node {
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-		"dec":                videoNegotiationDecH264,
+		"dec":                VideoStateDecH264,
 		"device_orientation": "0",
 		"screen_width":       "0",
 		"screen_height":      "0",
