@@ -153,3 +153,25 @@ func TestRecvUsesPeerLidForRecv(t *testing.T) {
 		t.Error("recv must not recover a self-LID-keyed packet")
 	}
 }
+
+func TestMediaPipelineTracksSenderStats(t *testing.T) {
+	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 0x12345678, 960)
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	header := rtp.RtpHeader{
+		Marker:         true,
+		PayloadType:    rtp.RtpPayloadTypeH264,
+		SequenceNumber: 0,
+		Timestamp:      90000,
+		Ssrc:           0x12345678,
+		VideoExtension: &rtp.VideoRtpExtension{MediaFrameInfo: rtp.VideoMediaFrameInfoIDR},
+	}
+	if _, err := pipe.ProtectRTP(&header, []byte{0x65, 1, 2, 3}); err != nil {
+		t.Fatalf("protect: %v", err)
+	}
+	stats := pipe.SenderStats()
+	if stats.PacketsSent != 1 || stats.OctetsSent != 4 || stats.RtpTimestamp != 90000 {
+		t.Errorf("stats = %+v, want packets=1 octets=4 timestamp=90000", stats)
+	}
+}

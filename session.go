@@ -1,6 +1,8 @@
 package meowcaller
 
 import (
+	"sync/atomic"
+
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow/types"
 
@@ -153,6 +155,9 @@ type MediaPipeline struct {
 	stream       *rtp.RtpStream
 	sendRoc      srtp.RocTracker
 	recvRoc      srtp.RecvRocTracker
+	packetsSent  atomic.Uint32
+	octetsSent   atomic.Uint32
+	rtpTimestamp atomic.Uint32
 	log          zerolog.Logger
 }
 
@@ -197,6 +202,9 @@ func (p *MediaPipeline) ProtectAudio(opusPayload []byte) ([]byte, error) {
 	}
 	packet = append(packet, encrypted...)
 	out := srtp.AppendWarpMITag(p.sendKeys.AuthKey[:], packet, roc, p.warpMITagLen)
+	p.packetsSent.Add(1)
+	p.octetsSent.Add(uint32(len(opusPayload)))
+	p.rtpTimestamp.Store(header.Timestamp)
 	p.log.Trace().Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint32("roc", roc).
 		Int("opus_bytes", len(opusPayload)).Int("packet_bytes", len(out)).Msg("protected audio frame")
 	return out, nil
@@ -216,7 +224,20 @@ func (p *MediaPipeline) ProtectRTP(header *rtp.RtpHeader, payload []byte) ([]byt
 		return nil, err
 	}
 	packet = append(packet, encrypted...)
-	return srtp.AppendWarpMITag(p.sendKeys.AuthKey[:], packet, roc, p.warpMITagLen), nil
+	out := srtp.AppendWarpMITag(p.sendKeys.AuthKey[:], packet, roc, p.warpMITagLen)
+	p.packetsSent.Add(1)
+	p.octetsSent.Add(uint32(len(payload)))
+	p.rtpTimestamp.Store(header.Timestamp)
+	return out, nil
+}
+
+// SenderStats snapshots the counters used by an RTCP Sender Report.
+func (p *MediaPipeline) SenderStats() rtp.RtcpSenderStats {
+	return rtp.RtcpSenderStats{
+		PacketsSent:  p.packetsSent.Load(),
+		OctetsSent:   p.octetsSent.Load(),
+		RtpTimestamp: p.rtpTimestamp.Load(),
+	}
 }
 
 // UnprotectAudio strips the WARP MI tag (not verified), parses the header, and
