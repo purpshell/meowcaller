@@ -56,6 +56,7 @@ type engineCall struct {
 	isVideo   bool         // inbound offer advertised <video> (video call)
 	videoGate bool         // outbound upgrade is waiting for peer acceptance
 	videoTx   *videoSender // video send pipeline, live while media runs
+	rekeyPeer func(string) error
 	started   bool
 	cancel    context.CancelFunc // tears down this call's media goroutine
 
@@ -618,10 +619,26 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 		return
 	}
 	e.mu.Lock()
+	var rekeyPeer func(string) error
+	answeringPeer := ev.From.String()
 	if current := e.calls[ev.CallID]; current != nil {
 		e.applyVoipSettingsCodec(current, ev.Data, ev.CallID)
+		if !ev.From.IsEmpty() {
+			current.from = ev.From
+		}
+		if answeringPeer != "" && answeringPeer != current.peerLID {
+			current.peerLID = answeringPeer
+			rekeyPeer = current.rekeyPeer
+		}
 	}
 	e.mu.Unlock()
+	if rekeyPeer != nil {
+		if err := rekeyPeer(answeringPeer); err != nil {
+			e.c.log.Warn().Err(err).Str("call_id", ev.CallID).Str("peer_lid", answeringPeer).Msg("failed to rekey media to answering device")
+		} else {
+			e.c.log.Info().Str("call_id", ev.CallID).Str("peer_lid", answeringPeer).Msg("rekeyed media to answering device")
+		}
+	}
 	if m.call != nil && m.call.State() < CallPhaseConnecting {
 		m.call.setPhase(CallPhaseConnecting)
 	}

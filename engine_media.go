@@ -191,7 +191,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
-	peerRtcpKeys, err := srtp.DeriveE2eSrtcpKeys(callKey, rtp.FormatE2ESrtpParticipantID(peerLID), log)
+	peerRtcp, err := newMediaSrtcpReceiver(callKey, peerLID)
 	if err != nil {
 		return err
 	}
@@ -319,6 +319,35 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
+	rekeyPeer := func(answeringPeer string) error {
+		if err := rxPipe.RekeyRecv(callKey, answeringPeer); err != nil {
+			return err
+		}
+		if err := rxVideoPipe.RekeyRecv(callKey, answeringPeer); err != nil {
+			return err
+		}
+		return peerRtcp.rekey(callKey, answeringPeer)
+	}
+	e.mu.Lock()
+	currentPeer := peerLID
+	if m := e.calls[callID]; m != nil {
+		m.rekeyPeer = rekeyPeer
+		currentPeer = m.peerLID
+	}
+	e.mu.Unlock()
+	if currentPeer != "" && currentPeer != peerLID {
+		if err := rekeyPeer(currentPeer); err != nil {
+			return fmt.Errorf("rekey media to answering device: %w", err)
+		}
+		peerLID = currentPeer
+	}
+	defer func() {
+		e.mu.Lock()
+		if m := e.calls[callID]; m != nil {
+			m.rekeyPeer = nil
+		}
+		e.mu.Unlock()
+	}()
 	var videoDepack rtp.H264Depacketizer
 	var videoAU []byte
 
@@ -421,7 +450,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			if !ok {
 				continue
 			}
-			plain, index, ok := srtp.UnprotectSrtcp(&peerRtcpKeys, senderSsrc, pkt)
+			plain, index, ok := peerRtcp.unprotect(senderSsrc, pkt)
 			if !ok {
 				if rtcpAuthFail++; rtcpAuthFail == 1 {
 					log.Warn().Uint32("ssrc", senderSsrc).Msg("peer SRTCP failed authentication")
@@ -627,6 +656,36 @@ type mediaSrtcpSender struct {
 	cname   [rtp.WhatsappRtcpCnameLen]byte
 	profile bool
 	index   uint32
+}
+
+type mediaSrtcpReceiver struct {
+	mu   sync.Mutex
+	keys srtp.E2eSrtpKeys
+}
+
+func newMediaSrtcpReceiver(callKey []byte, peerLID string) (*mediaSrtcpReceiver, error) {
+	keys, err := srtp.DeriveE2eSrtcpKeys(callKey, rtp.FormatE2ESrtpParticipantID(peerLID))
+	if err != nil {
+		return nil, err
+	}
+	return &mediaSrtcpReceiver{keys: keys}, nil
+}
+
+func (r *mediaSrtcpReceiver) rekey(callKey []byte, peerLID string) error {
+	keys, err := srtp.DeriveE2eSrtcpKeys(callKey, rtp.FormatE2ESrtpParticipantID(peerLID))
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.keys = keys
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *mediaSrtcpReceiver) unprotect(senderSSRC uint32, packet []byte) ([]byte, uint32, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return srtp.UnprotectSrtcp(&r.keys, senderSSRC, packet)
 }
 
 func newMediaSrtcpSender(callKey []byte, selfLID string, ssrc uint32, profile bool) (*mediaSrtcpSender, error) {

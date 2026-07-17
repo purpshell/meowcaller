@@ -118,3 +118,27 @@ func TestMediaSrtcpSenderProtectsVideoReport(t *testing.T) {
 		t.Fatalf("protected report length = %d, want 74", len(packet))
 	}
 }
+
+func TestMediaSrtcpReceiverRekeysForAnsweringDevice(t *testing.T) {
+	callKey := iota32()
+	const ssrc = 0x55667788
+	receiver, err := newMediaSrtcpReceiver(callKey, "222222222222222:0@lid")
+	if err != nil {
+		t.Fatalf("receiver: %v", err)
+	}
+	sender, err := newMediaSrtcpSender(callKey, "222222222222222:7@lid", ssrc, true)
+	if err != nil {
+		t.Fatalf("sender: %v", err)
+	}
+	packet, err := sender.senderReport(rtp.RtcpSenderStats{PacketsSent: 1}, 1700000000000)
+	if err != nil {
+		t.Fatalf("sender report: %v", err)
+	}
+
+	if err = receiver.rekey(callKey, "222222222222222:7@lid"); err != nil {
+		t.Fatalf("rekey: %v", err)
+	}
+	if _, _, ok := receiver.unprotect(ssrc, packet); !ok {
+		t.Fatal("rekeyed SRTCP receiver rejected answering-device report")
+	}
+}

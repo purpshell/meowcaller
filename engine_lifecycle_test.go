@@ -225,6 +225,34 @@ func TestOutgoingPeerAcceptLifecycle(t *testing.T) {
 	}
 }
 
+func TestOutgoingAcceptRekeysToAnsweringDevice(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.peerLID = peerJID().String()
+	answeringDevice := peerJID()
+	answeringDevice.Device = 7
+	var rekeyed string
+	m.rekeyPeer = func(peer string) error {
+		rekeyed = peer
+		return nil
+	}
+
+	eng.onAccept(&events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: call.ID(), From: answeringDevice},
+		Data:          &waBinary.Node{Tag: "accept"},
+	})
+
+	if rekeyed != answeringDevice.String() {
+		t.Fatalf("rekeyed peer = %q, want %q", rekeyed, answeringDevice.String())
+	}
+	eng.mu.Lock()
+	gotPeer, gotFrom := m.peerLID, m.from
+	eng.mu.Unlock()
+	if gotPeer != answeringDevice.String() || gotFrom != answeringDevice {
+		t.Fatalf("accepted routing = (%q, %s), want (%q, %s)", gotPeer, gotFrom, answeringDevice.String(), answeringDevice)
+	}
+}
+
 func TestOutgoingPeerAcceptCallbackFiresOnceAfterMediaStarted(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	call.setPhase(CallPhaseConnecting)
