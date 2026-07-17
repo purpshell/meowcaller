@@ -8,7 +8,7 @@ Matrix room: [#meowcaller:matrix.org](https://matrix.to/#/#meowcaller:matrix.org
 
 Discord channel: #meowcaller in the [WhiskeySockets Discord server](https://whiskey.so/discord).
 
-You can find the underlying spec in the [WhatsApp Calls Research Group](https://wacrg.org). We are under process of standardizing the spec and moving away from whatsapp-rust source of truth comments.
+You can find the underlying spec in the [WhatsApp Calls Research Group](https://wacrg.org). Video transition behavior is cross-checked against the independently implemented [whatsapp-rust call stack](https://github.com/oxidezap/whatsapp-rust/pull/1024).
 
 ## Usage
 The [godoc](https://pkg.go.dev/github.com/purpshell/meowcaller) includes docs for all methods.
@@ -48,12 +48,13 @@ Core VoIP features are present:
 - Outbound calls
 - Inbound calls
 - Audio calls (the pure-Go MLow codec)
-- Video calls (ported from WaCalls; see Credits)
+- Video calls, including calls that start with video
+- Mid-call audio-to-video upgrade, acceptance, rejection, cancellation, and downgrade
+- Camera orientation and authenticated video keyframe feedback
 
 Things that are not yet implemented:
 
 - Opus codec fallback for clients not using MLOW (in progress; testing edge cases)
-- Mid-call audio→video upgrade (from-start video calls work; the upgrade handshake is WIP)
 - Group calls (WIP)
 - Call signalling features (raise hand, lobby, reactions)
 
@@ -61,7 +62,7 @@ Things that are not yet implemented:
 
 meowcaller relies heavily on primitives that are implemented in the [WhatsApp Calls Research Group](https://wacrg.org). I thank all the developers who have contributed to it.
 
-meowcaller's video call implementation is built on the design of [WaCalls](https://github.com/JotaDev66/WaCalls) by [jotadev66](https://github.com/JotaDev66). WaCalls in turn vendors meowcaller's MLow impl.
+The video transition lifecycle was validated against [whatsapp-rust PR #1024](https://github.com/oxidezap/whatsapp-rust/pull/1024), an independent implementation of the same protocol.
 
 ## Sponsoring and contribution
 You may contribute to the maintenance of this library by sponsoring its maintainers on [GitHub](https://purpshell.dev/sponsor).
@@ -71,4 +72,3 @@ You may also submit pull requests and issues where relevant, given you follow th
 ## License
 
 This repository follows the MIT license, as stated in the [LICENSE](/LICENSE) file
-
