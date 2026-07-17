@@ -20,7 +20,7 @@ type webCallState struct {
 	Peer        string `json:"peer,omitempty"`
 	Phase       int    `json:"phase,omitempty"`
 	Video       bool   `json:"video,omitempty"`
-	VideoState  int    `json:"video_state,omitempty"`
+	VideoState  int    `json:"video_state"`
 	Orientation int    `json:"orientation,omitempty"`
 	Message     string `json:"message,omitempty"`
 }
