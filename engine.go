@@ -32,12 +32,9 @@ import (
 type engine struct {
 	c *Client
 
-	mu            sync.Mutex
-	calls         map[string]*engineCall // keyed by call-id
-	recentCalls   map[string]*Call       // ended calls retained briefly for delayed reactions
-	sendCallNode  func(context.Context, waBinary.Node) error
-	buildReaction func(types.JID, types.JID, types.MessageID, string) *waE2E.Message
-	sendMessage   func(context.Context, types.JID, *waE2E.Message) error
+	mu           sync.Mutex
+	calls        map[string]*engineCall // keyed by call-id
+	sendCallNode func(context.Context, waBinary.Node) error
 }
 
 // engineCall is the engine's per-call state: the public Call handle plus the inputs
@@ -60,6 +57,7 @@ type engineCall struct {
 	remoteVideo bool         // the peer is sending video to this client
 	videoGate   bool         // outbound upgrade is waiting for peer acceptance
 	videoTx     *videoSender // video send pipeline, live while media runs
+	appDataTx   *appDataSender
 	rekeyPeer   func(string) error
 	started     bool
 	cancel      context.CancelFunc // tears down this call's media goroutine
@@ -70,15 +68,10 @@ type engineCall struct {
 
 // newEngine creates the engine for a Client.
 func newEngine(c *Client) *engine {
-	e := &engine{c: c, calls: map[string]*engineCall{}, recentCalls: map[string]*Call{}}
+	e := &engine{c: c, calls: map[string]*engineCall{}}
 	if c != nil && c.wa != nil {
 		e.sendCallNode = func(ctx context.Context, node waBinary.Node) error {
 			return c.wa.DangerousInternals().SendNode(ctx, node)
-		}
-		e.buildReaction = c.wa.BuildReaction
-		e.sendMessage = func(ctx context.Context, to types.JID, message *waE2E.Message) error {
-			_, err := c.wa.SendMessage(ctx, to, message)
-			return err
 		}
 	}
 	return e
@@ -128,61 +121,8 @@ func (e *engine) install() {
 			e.onTerminate(ev.CallID, ev.Reason)
 		case *events.CallReject:
 			e.onReject(ev)
-		case *events.Message:
-			e.onReactionMessage(ev)
 		}
 	})
-}
-
-func (e *engine) onReactionMessage(evt *events.Message) {
-	if evt == nil || evt.Message == nil {
-		return
-	}
-	reaction := evt.Message.GetReactionMessage()
-	if encrypted := evt.Message.GetEncReactionMessage(); encrypted != nil {
-		if e.c == nil || e.c.wa == nil {
-			return
-		}
-		decrypted, err := e.c.wa.DecryptReaction(context.Background(), evt)
-		if err != nil {
-			e.c.log.Warn().Err(err).Str("message_id", evt.Info.ID).Msg("call reaction decryption failed")
-			return
-		}
-		decrypted.Key = encrypted.GetTargetMessageKey()
-		reaction = decrypted
-	}
-	if reaction == nil {
-		return
-	}
-	callID := reaction.GetKey().GetID()
-	call := e.reactionCall(callID)
-	if call == nil {
-		return
-	}
-	value := CallReaction{
-		Emoji:   reaction.GetText(),
-		Sender:  evt.Info.Sender,
-		Removed: reaction.GetText() == "",
-	}
-	if e.c != nil {
-		e.c.log.Debug().Str("call_id", callID).Str("emoji", value.Emoji).
-			Stringer("sender", value.Sender).Bool("removed", value.Removed).Msg("call reaction received")
-	}
-	if fn := call.onReactionFn(); fn != nil {
-		fn(value)
-	}
-}
-
-func (e *engine) reactionCall(callID string) *Call {
-	if callID == "" {
-		return nil
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if active := e.calls[callID]; active != nil {
-		return active.call
-	}
-	return e.recentCalls[callID]
 }
 
 func (e *engine) sendReaction(callID, emoji string) error {
@@ -192,14 +132,12 @@ func (e *engine) sendReaction(callID, emoji string) error {
 		e.mu.Unlock()
 		return errors.New("meowcaller: call is not active")
 	}
-	chat, creator := m.call.Peer(), m.creator
-	build, send := e.buildReaction, e.sendMessage
+	sender := m.appDataTx
 	e.mu.Unlock()
-	if build == nil || send == nil {
-		return errors.New("meowcaller: message sending is unavailable")
+	if sender == nil {
+		return errAppDataUnavailable
 	}
-	message := build(chat, creator, types.MessageID(callID), emoji)
-	return send(context.Background(), chat, message)
+	return sender.sendReaction(emoji)
 }
 
 // entry returns (creating if needed) the per-call state for callID.
@@ -1047,20 +985,8 @@ func (e *engine) finishCall(callID, reason string) {
 		cancel = m.cancel
 		m.cancel = nil
 		call = m.call
-		if call != nil {
-			e.recentCalls[callID] = call
-		}
 	}
 	e.mu.Unlock()
-	if call != nil {
-		time.AfterFunc(time.Minute, func() {
-			e.mu.Lock()
-			if e.recentCalls[callID] == call {
-				delete(e.recentCalls, callID)
-			}
-			e.mu.Unlock()
-		})
-	}
 	if cancel != nil {
 		cancel()
 	}

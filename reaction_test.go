@@ -1,124 +1,135 @@
 package meowcaller
 
 import (
-	"context"
+	"bytes"
 	"errors"
 	"testing"
 
-	"go.mau.fi/whatsmeow/proto/waCommon"
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/protobuf/proto"
+	"github.com/purpshell/meowcaller/rtp"
 )
 
-func reactionEvent(callID, emoji string, sender types.JID) *events.Message {
-	return &events.Message{
-		Info: types.MessageInfo{MessageSource: types.MessageSource{Sender: sender}},
-		Message: &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
-			Key:  &waCommon.MessageKey{ID: proto.String(callID)},
-			Text: proto.String(emoji),
-		}},
+func TestAppDataReactionMatchesCapturedWirePayload(t *testing.T) {
+	want := []byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x01, 0x12, 0x04, 0xf0, 0x9f, 0x91, 0x8d}
+	if got := encodeAppDataReaction(1, "👍"); !bytes.Equal(got, want) {
+		t.Fatalf("encoded reaction = %x, want %x", got, want)
 	}
 }
 
-func TestCallSendsReactionToCallCreator(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	var gotChat, gotSender types.JID
-	var gotID types.MessageID
-	var gotEmoji string
-	eng.buildReaction = func(chat, sender types.JID, id types.MessageID, emoji string) *waE2E.Message {
-		gotChat, gotSender, gotID, gotEmoji = chat, sender, id, emoji
-		return &waE2E.Message{}
+func TestAppDataReactionDecodesCapturedWirePayloads(t *testing.T) {
+	tests := []struct {
+		payload []byte
+		id      uint64
+		emoji   string
+	}{
+		{[]byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x01, 0x12, 0x04, 0xf0, 0x9f, 0x91, 0x8d}, 1, "👍"},
+		{[]byte{0x0a, 0x0c, 0x0a, 0x0a, 0x08, 0x02, 0x12, 0x06, 0xe2, 0x9d, 0xa4, 0xef, 0xb8, 0x8f}, 2, "❤️"},
+		{[]byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x03, 0x12, 0x04, 0xf0, 0x9f, 0x98, 0x82}, 3, "😂"},
+		{[]byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x04, 0x12, 0x04, 0xf0, 0x9f, 0x98, 0xae}, 4, "😮"},
+		{[]byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x05, 0x12, 0x04, 0xf0, 0x9f, 0x98, 0xa2}, 5, "😢"},
+		{[]byte{0x0a, 0x0a, 0x0a, 0x08, 0x08, 0x06, 0x12, 0x04, 0xf0, 0x9f, 0x99, 0x8f}, 6, "🙏"},
 	}
-	eng.sendMessage = func(context.Context, types.JID, *waE2E.Message) error { return nil }
+	for _, tt := range tests {
+		reactions, err := decodeAppDataReactions(tt.payload)
+		if err != nil {
+			t.Fatalf("decode %x: %v", tt.payload, err)
+		}
+		if len(reactions) != 1 || reactions[0].transactionID != tt.id || reactions[0].emoji != tt.emoji {
+			t.Fatalf("decode %x = %+v, want id=%d emoji=%q", tt.payload, reactions, tt.id, tt.emoji)
+		}
+	}
+}
 
-	if err := call.SendReaction("👍"); err != nil {
+func TestAppDataReceiverDeduplicatesRetransmissions(t *testing.T) {
+	var receiver appDataReceiver
+	payload := encodeAppDataReaction(9, "👍")
+	first, ok, err := receiver.receive(payload)
+	if err != nil || !ok || first.emoji != "👍" {
+		t.Fatalf("first receive = (%+v, %v, %v)", first, ok, err)
+	}
+	if _, ok, err = receiver.receive(payload); err != nil || ok {
+		t.Fatalf("duplicate receive = (ok=%v, err=%v), want ignored", ok, err)
+	}
+	if _, ok, err = receiver.receive(encodeAppDataReaction(8, "👏")); err != nil || ok {
+		t.Fatalf("older receive = (ok=%v, err=%v), want ignored", ok, err)
+	}
+}
+
+func TestAppDataSenderUsesCapturedRTPShape(t *testing.T) {
+	callKey := iota32()
+	const ssrc = 0x7f4d310b
+	pipe, err := NewMediaPipeline(callKey, "111111111111111:0@lid", "222222222222222:0@lid", ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("sender pipe: %v", err)
+	}
+	var packets [][]byte
+	sender := newAppDataSender(pipe, ssrc, func(packet []byte) (int, error) {
+		packets = append(packets, bytes.Clone(packet))
+		return len(packet), nil
+	})
+	sender.retransmitInterval = 0
+	if err = sender.sendReaction("👍"); err != nil {
+		t.Fatalf("send reaction: %v", err)
+	}
+	if len(packets) != appDataRetransmitCount {
+		t.Fatalf("packet count = %d, want %d", len(packets), appDataRetransmitCount)
+	}
+	for i, packet := range packets {
+		header, ok := rtp.ParseRtpHeader(packet)
+		if !ok {
+			t.Fatalf("packet %d has no RTP header", i)
+		}
+		if header.PayloadType != rtp.RtpPayloadTypeAppData || header.Ssrc != ssrc || header.SequenceNumber != uint16(i+1) || header.Timestamp != uint32((i+1)*appDataTimestampStep) {
+			t.Fatalf("packet %d header = %+v", i, header)
+		}
+	}
+
+	receiverPipe, err := NewMediaPipeline(callKey, "222222222222222:0@lid", "111111111111111:0@lid", ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("receiver pipe: %v", err)
+	}
+	_, payload, ok := receiverPipe.UnprotectAudio(packets[0])
+	if !ok {
+		t.Fatal("receiver could not unprotect app-data packet")
+	}
+	if !bytes.Equal(payload, encodeAppDataReaction(1, "👍")) {
+		t.Fatalf("decrypted payload = %x", payload)
+	}
+}
+
+func TestMediaPayloadClassificationDoesNotTreatAppDataAsAudio(t *testing.T) {
+	if got := classifyMediaPayload(rtp.RtpHeader{PayloadType: rtp.RtpPayloadTypeAppData}); got != mediaPayloadAppData {
+		t.Fatalf("PT119 classified as %v, want app-data", got)
+	}
+	if got := classifyMediaPayload(rtp.RtpHeader{PayloadType: 118}); got != mediaPayloadUnknown {
+		t.Fatalf("unknown PT classified as %v, want unknown", got)
+	}
+}
+
+func TestCallSendsReactionThroughActiveAppDataStream(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 1234, FrameSamples)
+	if err != nil {
+		t.Fatalf("sender pipe: %v", err)
+	}
+	var sent int
+	sender := newAppDataSender(pipe, 1234, func(packet []byte) (int, error) {
+		sent++
+		return len(packet), nil
+	})
+	sender.retransmitInterval = 0
+	eng.calls[call.ID()].appDataTx = sender
+
+	if err = call.SendReaction("👍"); err != nil {
 		t.Fatalf("SendReaction: %v", err)
 	}
-	if gotChat != call.Peer() || gotSender != creatorJID() || gotID != types.MessageID(call.ID()) || gotEmoji != "👍" {
-		t.Fatalf("reaction target = chat:%s sender:%s id:%s emoji:%s", gotChat, gotSender, gotID, gotEmoji)
+	if sent != appDataRetransmitCount {
+		t.Fatalf("sent %d packets, want %d", sent, appDataRetransmitCount)
 	}
 }
 
-func TestIncomingCallReactionTargetsRemoteCreator(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	eng.calls[call.ID()].direction = CallDirectionIncoming
-	eng.calls[call.ID()].creator = call.Peer()
-	var gotSender types.JID
-	eng.buildReaction = func(_ types.JID, sender types.JID, _ types.MessageID, _ string) *waE2E.Message {
-		gotSender = sender
-		return &waE2E.Message{}
-	}
-	eng.sendMessage = func(context.Context, types.JID, *waE2E.Message) error { return nil }
-
-	if err := call.SendReaction("❤️"); err != nil {
-		t.Fatalf("SendReaction: %v", err)
-	}
-	if gotSender != call.Peer() {
-		t.Fatalf("incoming reaction target sender = %s, want %s", gotSender, call.Peer())
-	}
-}
-
-func TestCallSendReactionPropagatesSendFailure(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	want := errors.New("send failed")
-	eng.buildReaction = func(types.JID, types.JID, types.MessageID, string) *waE2E.Message {
-		return &waE2E.Message{}
-	}
-	eng.sendMessage = func(context.Context, types.JID, *waE2E.Message) error { return want }
-
-	if err := call.SendReaction(""); !errors.Is(err, want) {
-		t.Fatalf("SendReaction error = %v, want %v", err, want)
-	}
-}
-
-func TestCallReactionIsDispatchedByTargetCallID(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	sender := peerJID()
-	var got CallReaction
-	call.OnReaction(func(reaction CallReaction) { got = reaction })
-
-	eng.onReactionMessage(reactionEvent(call.ID(), "👍", sender))
-
-	if got.Emoji != "👍" || got.Sender != sender || got.Removed {
-		t.Fatalf("reaction = %+v", got)
-	}
-}
-
-func TestCallReactionRemovalIsDispatched(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	var got CallReaction
-	call.OnReaction(func(reaction CallReaction) { got = reaction })
-
-	eng.onReactionMessage(reactionEvent(call.ID(), "", peerJID()))
-
-	if !got.Removed || got.Emoji != "" {
-		t.Fatalf("reaction removal = %+v", got)
-	}
-}
-
-func TestCallReactionIgnoresUnrelatedMessage(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	called := false
-	call.OnReaction(func(CallReaction) { called = true })
-
-	eng.onReactionMessage(reactionEvent("OTHER", "👍", peerJID()))
-
-	if called {
-		t.Fatal("reaction for unrelated message reached call callback")
-	}
-}
-
-func TestCallReactionFindsRecentlyEndedCall(t *testing.T) {
-	eng, call := testEngineWithOutgoingCall()
-	var got CallReaction
-	call.OnReaction(func(reaction CallReaction) { got = reaction })
-	eng.finishCall(call.ID(), "ended")
-
-	eng.onReactionMessage(reactionEvent(call.ID(), "❤️", peerJID()))
-
-	if got.Emoji != "❤️" {
-		t.Fatalf("late reaction = %+v", got)
+func TestCallSendReactionRequiresActiveAppDataStream(t *testing.T) {
+	_, call := testEngineWithOutgoingCall()
+	if err := call.SendReaction("👍"); !errors.Is(err, errAppDataUnavailable) {
+		t.Fatalf("SendReaction error = %v, want %v", err, errAppDataUnavailable)
 	}
 }

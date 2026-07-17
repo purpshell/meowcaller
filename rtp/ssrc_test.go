@@ -72,3 +72,17 @@ func TestE2EParticipantIDVariants(t *testing.T) {
 		t.Errorf("variants = %q, want %q", got, want)
 	}
 }
+
+func TestCapturedAppDataSsrcUsesSlotSix(t *testing.T) {
+	got, err := DeriveWasmParticipantSsrc(
+		"A8FE932D75AEE1DEDFC3A877E7238B88",
+		"242653052539031:0@lid",
+		AppDataSlotWord,
+	)
+	if err != nil {
+		t.Fatalf("derive app-data SSRC: %v", err)
+	}
+	if got != 2135790987 {
+		t.Fatalf("app-data SSRC = %d, want captured 2135790987", got)
+	}
+}

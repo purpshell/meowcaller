@@ -13,6 +13,8 @@ import (
 
 const (
 	RtpPayloadTypeOpus uint8 = 120
+	// RtpPayloadTypeAppData carries protobuf call reactions and other RTC app data.
+	RtpPayloadTypeAppData uint8 = 119
 	// RtpPayloadTypeH264 is the WhatsApp video (H.264) RTP payload type, used to demux
 	// video off the relay. Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/core/types.go#L44
 	RtpPayloadTypeH264          uint8  = 97

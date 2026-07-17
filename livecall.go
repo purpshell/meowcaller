@@ -34,8 +34,8 @@ type Call struct {
 	onReaction             func(CallReaction)
 }
 
-// CallReaction is an emoji reaction associated with a WhatsApp call.
-// An empty Emoji with Removed set means the sender removed their reaction.
+// CallReaction is a transient emoji reaction received over the call's RTC app-data stream.
+// An empty Emoji with Removed set means the sender cleared their reaction.
 type CallReaction struct {
 	Emoji   string
 	Sender  types.JID
@@ -108,8 +108,8 @@ func (c *Call) SetVideoOrientation(orientation int) error {
 	return c.eng.setVideoOrientation(c.id, orientation)
 }
 
-// SendReaction sends an emoji reaction targeting this call. Pass an empty string to
-// remove the reaction previously sent by this client.
+// SendReaction sends an emoji over this call's RTC app-data stream. Pass an empty
+// string to clear the reaction previously sent by this client.
 func (c *Call) SendReaction(emoji string) error {
 	return c.eng.sendReaction(c.id, emoji)
 }
