@@ -42,6 +42,55 @@ func TestOutgoingPeerAcceptLifecycle(t *testing.T) {
 	}
 }
 
+func TestOutgoingPeerAcceptCallbackFiresOnceAfterMediaStarted(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	call.setPhase(CallPhaseConnecting)
+	var accepted int
+	call.OnPeerAccept(func() { accepted++ })
+	event := &events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: "CID", From: peerJID()},
+		Data:          &waBinary.Node{Tag: "accept"},
+	}
+
+	eng.onAccept(event)
+	eng.onAccept(event)
+
+	if accepted != 1 {
+		t.Fatalf("peer accept callbacks = %d, want 1", accepted)
+	}
+}
+
+func TestOutgoingPeerAcceptCallbackReplaysAfterRegistration(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	eng.onAccept(&events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: "CID", From: peerJID()},
+		Data:          &waBinary.Node{Tag: "accept"},
+	})
+	var accepted int
+
+	call.OnPeerAccept(func() { accepted++ })
+
+	if accepted != 1 {
+		t.Fatalf("late peer accept callbacks = %d, want 1", accepted)
+	}
+}
+
+func TestOutgoingPeerAcceptIgnoredAfterCallEnded(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	call.setPhase(CallPhaseEnded)
+	var accepted int
+	call.OnPeerAccept(func() { accepted++ })
+
+	eng.onAccept(&events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: "CID", From: peerJID()},
+		Data:          &waBinary.Node{Tag: "accept"},
+	})
+
+	if accepted != 0 {
+		t.Fatalf("peer accept callbacks after end = %d, want 0", accepted)
+	}
+}
+
 func TestOutgoingPeerAcceptDoesNotRegressActiveCall(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	call.setPhase(CallPhaseActive)

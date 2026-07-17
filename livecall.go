@@ -16,16 +16,19 @@ type Call struct {
 	id   string
 	peer types.JID
 
-	mu           sync.Mutex
-	phase        CallPhase
-	player       *Player
-	sink         AudioSink
-	onReady      func()
-	onEnd        func(reason string)
-	onState      func(CallPhase)
-	onMuteState  func(muted bool)
-	videoSink    VideoSink
-	onVideoState func(VideoState)
+	mu             sync.Mutex
+	phase          CallPhase
+	player         *Player
+	sink           AudioSink
+	onReady        func()
+	onEnd          func(reason string)
+	onState        func(CallPhase)
+	onPeerAccept   func()
+	peerAccepted   bool
+	acceptNotified bool
+	onMuteState    func(muted bool)
+	videoSink      VideoSink
+	onVideoState   func(VideoState)
 }
 
 // ID returns the call-id (32 uppercase hex chars).
@@ -157,6 +160,35 @@ func (c *Call) OnStateChange(fn func(CallPhase)) {
 	c.mu.Lock()
 	c.onState = fn
 	c.mu.Unlock()
+}
+
+// OnPeerAccept registers a one-shot callback for the remote peer accepting an outgoing
+// call. If acceptance arrived before registration, the callback is invoked immediately.
+func (c *Call) OnPeerAccept(fn func()) {
+	c.mu.Lock()
+	c.onPeerAccept = fn
+	shouldNotify := c.peerAccepted && !c.acceptNotified && fn != nil
+	if shouldNotify {
+		c.acceptNotified = true
+	}
+	c.mu.Unlock()
+	if shouldNotify {
+		fn()
+	}
+}
+
+func (c *Call) markPeerAccepted() {
+	c.mu.Lock()
+	c.peerAccepted = true
+	fn := c.onPeerAccept
+	shouldNotify := !c.acceptNotified && fn != nil
+	if shouldNotify {
+		c.acceptNotified = true
+	}
+	c.mu.Unlock()
+	if shouldNotify {
+		fn()
+	}
 }
 
 // OnMuteState registers a callback fired for each inbound WhatsApp mute_v2 state.

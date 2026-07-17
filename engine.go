@@ -502,6 +502,9 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 	if m == nil || m.direction != CallDirectionOutgoing {
 		return
 	}
+	if m.call != nil && m.call.State() == CallPhaseEnded {
+		return
+	}
 	e.mu.Lock()
 	if current := e.calls[ev.CallID]; current != nil {
 		e.applyVoipSettingsCodec(current, ev.Data, ev.CallID)
@@ -509,6 +512,9 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 	e.mu.Unlock()
 	if m.call != nil && m.call.State() < CallPhaseConnecting {
 		m.call.setPhase(CallPhaseConnecting)
+	}
+	if m.call != nil {
+		m.call.markPeerAccepted()
 	}
 	e.c.log.Info().
 		Str("call_id", ev.CallID).
