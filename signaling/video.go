@@ -8,10 +8,9 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-// Video call signaling, ported from WaCalls (jotadev66, MIT) feat/video-calls and
-// adjusted against captured WhatsApp iPhone video-call signaling. A 1:1 video call
-// advertises a <video> child in the <offer>/<accept>, and an inbound video call is
-// detected by the presence of that child. See README Credits.
+// Video call signaling follows the 1:1 video lifecycle implemented by whatsapp-rust.
+// A from-start video call advertises a <video> child in the offer and accept. Mid-call
+// upgrades and downgrades use standalone <video state=N> call stanzas.
 
 // VideoCodecH264 is the lowercase codec token used by bridge internals.
 const VideoCodecH264 = "h264"
@@ -21,34 +20,92 @@ const VideoCodecH264 = "h264"
 const VideoStateDecH264 = "H264"
 
 const (
+	VideoDecRequest = "H264"
+	VideoDecAccept  = "H264,AV1"
+)
+
+const (
 	// Captured iPhone offers use this spelling. The tested iPhone receipts but does
 	// not answer initial offers using h264/h264 or the legacy orientation attribute.
 	videoOfferEncH264 = "h.264"
 	videoOfferDecH264 = VideoStateDecH264
 )
 
-// Observed <video> "state" values. 1 = active (video on) and 11 = mid-call upgrade (carries
-// the inline media payload); the intermediate setup values (2/4/6) are unconfirmed.
+// WhatsApp's in-call video transition states.
 const (
-	VideoStateActive  = 1
-	VideoStateUpgrade = 11
+	VideoStateDisabled         = 0
+	VideoStateEnabled          = 1
+	VideoStateUpgradeRequest   = 3
+	VideoStateUpgradeAccept    = 4
+	VideoStateUpgradeReject    = 5
+	VideoStateStopped          = 6
+	VideoStateUpgradeCancel    = 8
+	VideoStateUpgradeRequestV2 = 11
+
+	// Backward-compatible names used by existing bridge integrations.
+	VideoStateActive  = VideoStateEnabled
+	VideoStateUpgrade = VideoStateUpgradeRequestV2
 )
+
+type VideoStateParams struct {
+	CallID            string
+	To                types.JID
+	CallCreator       types.JID
+	WrapperID         string
+	State             int
+	Dec               string
+	DeviceOrientation *int
+}
+
+func BuildVideoStateWithParams(params VideoStateParams) waBinary.Node {
+	attrs := waBinary.Attrs{
+		"call-id":      params.CallID,
+		"call-creator": params.CallCreator,
+		"state":        strconv.Itoa(params.State),
+	}
+	if params.Dec != "" {
+		attrs["dec"] = params.Dec
+	}
+	if params.State == VideoStateUpgradeRequestV2 {
+		attrs["voip_settings"] = "video"
+	}
+	if params.DeviceOrientation != nil {
+		attrs["device_orientation"] = strconv.Itoa(*params.DeviceOrientation)
+	}
+	video := waBinary.Node{Tag: "video", Attrs: attrs}
+	return waBinary.Node{Tag: "call", Attrs: waBinary.Attrs{"to": params.To, "id": params.WrapperID}, Content: []waBinary.Node{video}}
+}
 
 // BuildVideoState builds an outbound standalone <call><video …/></call> state stanza — used
 // to signal our own video on/off + orientation (e.g. to accept a mid-call video upgrade).
 // dec is included when non-empty.
 func BuildVideoState(callID string, to, callCreator types.JID, wrapperID string, state, deviceOrientation int, dec string, log ...zerolog.Logger) waBinary.Node {
-	attrs := waBinary.Attrs{
-		"call-id":            callID,
-		"call-creator":       callCreator,
-		"state":              strconv.Itoa(state),
-		"device_orientation": strconv.Itoa(deviceOrientation),
+	return BuildVideoStateWithParams(VideoStateParams{
+		CallID: callID, To: to, CallCreator: callCreator, WrapperID: wrapperID,
+		State: state, Dec: dec, DeviceOrientation: &deviceOrientation,
+	})
+}
+
+// BuildVideoAck creates the typed acknowledgement required for an in-call video
+// transition and preserves companion-device routing metadata from the original stanza.
+func BuildVideoAck(original *waBinary.Node) (waBinary.Node, bool) {
+	if original == nil {
+		return waBinary.Node{}, false
 	}
-	if dec != "" {
-		attrs["dec"] = dec
+	ag := original.AttrGetter()
+	id := ag.String("id")
+	from := ag.JID("from")
+	if id == "" || from.IsEmpty() {
+		return waBinary.Node{}, false
 	}
-	video := waBinary.Node{Tag: "video", Attrs: attrs}
-	return waBinary.Node{Tag: "call", Attrs: waBinary.Attrs{"to": to, "id": wrapperID}, Content: []waBinary.Node{video}}
+	attrs := waBinary.Attrs{"class": "call", "id": id, "to": from, "type": "video"}
+	if participant := ag.JID("participant"); !participant.IsEmpty() && participant != from {
+		attrs["participant"] = participant
+	}
+	if recipient := ag.JID("recipient"); !recipient.IsEmpty() {
+		attrs["recipient"] = recipient
+	}
+	return waBinary.Node{Tag: "ack", Attrs: attrs}, true
 }
 
 // videoOfferNode builds the <video> advertisement for an <offer> (sits after the
@@ -84,8 +141,6 @@ func videoPreacceptNode() waBinary.Node {
 // OfferHasVideo reports whether a parsed <offer> node advertises video — the presence of
 // a <video> child marks an inbound video call.
 func OfferHasVideo(offer *waBinary.Node) bool {
-	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/helpers.go#L11-L18
-	//                  https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/call/callmanager_signaling.go#L24
 	if offer == nil {
 		return false
 	}

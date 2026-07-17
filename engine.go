@@ -679,21 +679,16 @@ func (e *engine) onCallRaw(callNode *waBinary.Node) bool {
 // <call> node (replicating the real WhatsApp client; whatsmeow would otherwise send a bare
 // typeless ack that the peer treats as non-acceptance of a video upgrade).
 func (e *engine) ackVideoStanza(callNode *waBinary.Node) {
-	ag := callNode.AttrGetter()
-	id := ag.String("id")
-	from := ag.JID("from") // "from" is a JID attr (cf. the mute_v2 path), not a plain string
-	if id == "" || from.IsEmpty() {
-		e.c.log.Warn().Str("id", id).Msg("video ack: missing id/from, not acking")
+	ack, ok := signaling.BuildVideoAck(callNode)
+	if !ok {
+		e.c.log.Warn().Msg("video ack: missing id/from, not acking")
 		return
 	}
-	ack := waBinary.Node{Tag: "ack", Attrs: waBinary.Attrs{
-		"class": "call", "id": id, "to": from, "type": "video",
-	}}
 	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), ack); err != nil {
-		e.c.log.Warn().Err(err).Str("id", id).Msg("send video ack failed")
+		e.c.log.Warn().Err(err).Str("id", ack.AttrGetter().String("id")).Msg("send video ack failed")
 		return
 	}
-	e.c.log.Debug().Str("id", id).Msg("sent type=video ack")
+	e.c.log.Debug().Str("id", ack.AttrGetter().String("id")).Msg("sent type=video ack")
 }
 
 // onVideoStanza handles an inbound standalone <video> state stanza — the peer's video
