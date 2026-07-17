@@ -31,6 +31,15 @@ type Call struct {
 	videoSink              VideoSink
 	onVideoState           func(VideoState)
 	onVideoKeyframeRequest func()
+	onReaction             func(CallReaction)
+}
+
+// CallReaction is an emoji reaction associated with a WhatsApp call.
+// An empty Emoji with Removed set means the sender removed their reaction.
+type CallReaction struct {
+	Emoji   string
+	Sender  types.JID
+	Removed bool
 }
 
 // ID returns the call-id (32 uppercase hex chars).
@@ -99,6 +108,12 @@ func (c *Call) SetVideoOrientation(orientation int) error {
 	return c.eng.setVideoOrientation(c.id, orientation)
 }
 
+// SendReaction sends an emoji reaction targeting this call. Pass an empty string to
+// remove the reaction previously sent by this client.
+func (c *Call) SendReaction(emoji string) error {
+	return c.eng.sendReaction(c.id, emoji)
+}
+
 // Subscribe attaches p as the call's outbound audio player, replacing any previous one.
 // While the player is Playing, its source frames are encoded and sent to the peer;
 // otherwise silence is sent (the call must keep sending to hold the relay bridge).
@@ -158,6 +173,19 @@ func (c *Call) OnVideoKeyframeRequest(fn func()) {
 	c.mu.Lock()
 	c.onVideoKeyframeRequest = fn
 	c.mu.Unlock()
+}
+
+// OnReaction registers a callback for emoji reactions targeting this call.
+func (c *Call) OnReaction(fn func(CallReaction)) {
+	c.mu.Lock()
+	c.onReaction = fn
+	c.mu.Unlock()
+}
+
+func (c *Call) onReactionFn() func(CallReaction) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.onReaction
 }
 
 func (c *Call) requestVideoKeyframe() {
