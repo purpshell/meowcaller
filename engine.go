@@ -1071,8 +1071,17 @@ func parseRelayData(node *waBinary.Node) *relayData {
 }
 
 // getMediaRelayEndpoint prefers an outbound (non-FNA, auth_token_id≠0) endpoint, else
-// any non-FNA, else the first.
-func getMediaRelayEndpoint(rd *relayData) *relayEndpoint {
+// any non-FNA, else the first. For an inbound call the caller's uplink RTP lands on their
+// FNA-marked relay, so we must allocate on that same relay or the relay never bridges the
+// peer's media (the callee connects but hears nothing).
+func getMediaRelayEndpoint(rd *relayData, inbound bool) *relayEndpoint {
+	if inbound {
+		for i := range rd.endpoints {
+			if e := &rd.endpoints[i]; e.isFNA {
+				return e
+			}
+		}
+	}
 	for i := range rd.endpoints {
 		if e := &rd.endpoints[i]; !e.isFNA && e.authTokenID != 0 {
 			return e

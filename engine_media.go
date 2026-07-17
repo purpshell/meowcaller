@@ -39,6 +39,7 @@ func (e *engine) maybeStartMedia(callID string) {
 	m.cancel = cancel
 	call := m.call
 	callKey, selfLID, peerLID, rd := m.callKey, m.selfLID, m.peerLID, m.relay
+	inbound := m.direction == CallDirectionIncoming
 	e.mu.Unlock()
 
 	if call != nil {
@@ -46,7 +47,7 @@ func (e *engine) maybeStartMedia(callID string) {
 	}
 	e.c.log.Info().Str("call_id", callID).Msg("starting media")
 	go func() {
-		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, rd); err != nil {
+		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, rd, inbound); err != nil {
 			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("media ended")
 		}
 	}()
@@ -56,9 +57,9 @@ func (e *engine) maybeStartMedia(callID string) {
 // the channel and the allocate bytes (re-sent by the keepalive).
 //
 // NOT VALIDATED: live-relay only.
-func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSsrcs [9]uint32) (*relay.RelayMediaChannel, []byte, error) {
+func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSsrcs [9]uint32, inbound bool) (*relay.RelayMediaChannel, []byte, error) {
 	log := e.c.log
-	ep := getMediaRelayEndpoint(rd)
+	ep := getMediaRelayEndpoint(rd, inbound)
 	if ep == nil || len(ep.addresses) == 0 {
 		return nil, nil, fmt.Errorf("relay has no usable endpoint")
 	}
@@ -134,7 +135,7 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSs
 // out with the allocate at t+0, BEFORE any RTP; no STUN binding-requests are ever sent.
 //
 // NOT VALIDATED: live-relay only.
-func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKey []byte, selfLID, peerLID string, rd *relayData) error {
+func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKey []byte, selfLID, peerLID string, rd *relayData, inbound bool) error {
 	log := e.c.log
 	selfParticipantID := rtp.FormatE2ESrtpParticipantID(selfLID)
 	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, selfParticipantID, 0, log)
@@ -149,7 +150,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
-	ch, allocate, err := e.connectAndAllocate(ctx, rd, streamSsrcs)
+	ch, allocate, err := e.connectAndAllocate(ctx, rd, streamSsrcs, inbound)
 	if err != nil {
 		return err
 	}
