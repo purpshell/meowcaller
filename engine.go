@@ -360,6 +360,18 @@ func (e *engine) placeCall(ctx context.Context, target string, opts CallOptions)
 	if len(devices) == 0 {
 		return nil, fmt.Errorf("peer %s has no devices (unreachable / not on WhatsApp)", peerLID)
 	}
+	if e.c.ringPrimaryOnly {
+		primaryOnly := make([]types.JID, 0, len(devices))
+		for _, d := range devices {
+			if d.Device == 0 {
+				primaryOnly = append(primaryOnly, d)
+			}
+		}
+		if len(primaryOnly) > 0 {
+			e.c.log.Info().Int("all_devices", len(devices)).Int("primary_devices", len(primaryOnly)).Msg("ringing peer's primary device only")
+			devices = primaryOnly
+		}
+	}
 
 	var callKey [32]byte
 	if _, err := rand.Read(callKey[:]); err != nil {

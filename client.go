@@ -22,6 +22,8 @@ type Client struct {
 	diag *diag.Recorder
 	eng  *engine
 
+	ringPrimaryOnly bool
+
 	mu             sync.Mutex
 	onIncomingCall func(*Call)
 }
@@ -38,7 +40,7 @@ type CallOptions struct {
 // interception is in place before the receive loop starts.
 func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
-	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag}
+	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag, ringPrimaryOnly: cfg.ringPrimaryOnly}
 	c.eng = newEngine(c)
 	c.eng.install()
 	return c
