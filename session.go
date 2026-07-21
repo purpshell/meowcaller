@@ -1,6 +1,7 @@
 package meowcaller
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -154,6 +155,7 @@ type MediaPipeline struct {
 	warpMITagLen int
 	stream       *rtp.RtpStream
 	sendRoc      srtp.RocTracker
+	recvMu       sync.Mutex
 	recvRoc      srtp.RecvRocTracker
 	packetsSent  atomic.Uint32
 	octetsSent   atomic.Uint32
@@ -172,10 +174,12 @@ func (p *MediaPipeline) RekeyRecv(callKey []byte, peerJID string) error {
 	if err != nil {
 		return err
 	}
+	p.recvMu.Lock()
 	p.recvKeys = recvKeys
 	p.recvRoc = srtp.RecvRocTracker{}
 	p.recvLocked = true
 	p.recvCandidates = nil
+	p.recvMu.Unlock()
 	return nil
 }
 
@@ -279,9 +283,11 @@ func (p *MediaPipeline) UnprotectAudio(packet []byte) (rtp.RtpHeader, []byte, bo
 		p.log.Debug().Uint32("ssrc", header.Ssrc).Int("header_bytes", headerLen).Msg("unprotect: header length invalid or no payload")
 		return rtp.RtpHeader{}, nil, false
 	}
+	p.recvMu.Lock()
 	roc := p.recvRoc.GuessRoc(header.SequenceNumber)
 	p.selectRecvKey(withoutTag, packet[len(packet)-p.warpMITagLen:], roc)
 	plain, err := srtp.CryptPayload(&p.recvKeys, header.Ssrc, header.SequenceNumber, roc, withoutTag[headerLen:])
+	p.recvMu.Unlock()
 	if err != nil {
 		p.log.Debug().Err(err).Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint32("roc", roc).Msg("unprotect: SRTP decrypt failed")
 		return rtp.RtpHeader{}, nil, false
