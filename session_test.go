@@ -186,6 +186,42 @@ func TestRecvUsesPeerLidForRecv(t *testing.T) {
 	}
 }
 
+// TestMediaPipelineMultiCandidateAutoSelect proves the candidate system auto-selects
+// the correct recv key for a non-default device without an explicit RekeyRecv call.
+func TestMediaPipelineMultiCandidateAutoSelect(t *testing.T) {
+	callKey := iota32()
+	self := "111111111111111:0@lid"
+	initialPeer := "222222222222222:0@lid"
+	answeringPeer := "222222222222222:7@lid"
+	const ssrc = 0x55667788
+
+	receiver, err := NewMediaPipeline(callKey, self, initialPeer, ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("receiver: %v", err)
+	}
+	answeringDevice, err := NewMediaPipeline(callKey, answeringPeer, self, ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("answering device: %v", err)
+	}
+
+	payload := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	packet, err := answeringDevice.ProtectAudio(payload)
+	if err != nil {
+		t.Fatalf("protect: %v", err)
+	}
+
+	_, got, ok := receiver.UnprotectAudio(packet)
+	if !ok {
+		t.Fatal("auto-candidate selection failed: answering-device packet rejected")
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("auto-candidate payload = %x, want %x", got, payload)
+	}
+	if !receiver.recvLocked {
+		t.Fatal("auto-candidate selection did not lock a key")
+	}
+}
+
 func TestMediaPipelineTracksSenderStats(t *testing.T) {
 	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 0x12345678, 960)
 	if err != nil {

@@ -1,7 +1,6 @@
 package meowcaller
 
 import (
-	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -155,12 +154,15 @@ type MediaPipeline struct {
 	warpMITagLen int
 	stream       *rtp.RtpStream
 	sendRoc      srtp.RocTracker
-	recvMu       sync.Mutex
 	recvRoc      srtp.RecvRocTracker
 	packetsSent  atomic.Uint32
 	octetsSent   atomic.Uint32
 	rtpTimestamp atomic.Uint32
 	log          zerolog.Logger
+
+	recvCandidates []recvKeyCandidate
+	recvLocked     bool
+	recvTries      int
 }
 
 // RekeyRecv switches the receive keystream to the companion device that answered an
@@ -170,10 +172,10 @@ func (p *MediaPipeline) RekeyRecv(callKey []byte, peerJID string) error {
 	if err != nil {
 		return err
 	}
-	p.recvMu.Lock()
 	p.recvKeys = recvKeys
 	p.recvRoc = srtp.RecvRocTracker{}
-	p.recvMu.Unlock()
+	p.recvLocked = true
+	p.recvCandidates = nil
 	return nil
 }
 
@@ -196,11 +198,12 @@ func NewMediaPipeline(callKey []byte, selfJID, peerJID string, ssrc, samplesPerP
 		Uint32("samples_per_packet", samplesPerPacket).Int("warp_mi_tag_len", srtp.WarpMITagLen).
 		Msg("media pipeline initialized")
 	return &MediaPipeline{
-		sendKeys:     sendKeys,
-		recvKeys:     recvKeys,
-		warpMITagLen: srtp.WarpMITagLen,
-		stream:       rtp.NewRtpStream(ssrc, samplesPerPacket, false),
-		log:          log,
+		sendKeys:       sendKeys,
+		recvKeys:       recvKeys,
+		warpMITagLen:   srtp.WarpMITagLen,
+		stream:         rtp.NewRtpStream(ssrc, samplesPerPacket, false),
+		log:            log,
+		recvCandidates: buildRecvKeyCandidates(callKey, peerJID, log),
 	}, nil
 }
 
@@ -276,10 +279,9 @@ func (p *MediaPipeline) UnprotectAudio(packet []byte) (rtp.RtpHeader, []byte, bo
 		p.log.Debug().Uint32("ssrc", header.Ssrc).Int("header_bytes", headerLen).Msg("unprotect: header length invalid or no payload")
 		return rtp.RtpHeader{}, nil, false
 	}
-	p.recvMu.Lock()
 	roc := p.recvRoc.GuessRoc(header.SequenceNumber)
+	p.selectRecvKey(withoutTag, packet[len(packet)-p.warpMITagLen:], roc)
 	plain, err := srtp.CryptPayload(&p.recvKeys, header.Ssrc, header.SequenceNumber, roc, withoutTag[headerLen:])
-	p.recvMu.Unlock()
 	if err != nil {
 		p.log.Debug().Err(err).Uint32("ssrc", header.Ssrc).Uint16("seq", header.SequenceNumber).Uint32("roc", roc).Msg("unprotect: SRTP decrypt failed")
 		return rtp.RtpHeader{}, nil, false
