@@ -27,9 +27,10 @@ func newSmplDecoderState() *SmplDecoderState {
 
 // MlowDecoder is a stateful pure-Go MLow decoder.
 type MlowDecoder struct {
-	state      *SmplDecoderState
-	redundancy int32
-	log        zerolog.Logger
+	state              *SmplDecoderState
+	redundancy         int32
+	droppedUnsupported uint32
+	log                zerolog.Logger
 }
 
 // NewMlowDecoder allocates a fresh decoder.
@@ -149,6 +150,24 @@ func (d *MlowDecoder) decodeFrame(frame []byte) []float32 {
 	if toc.SID || !toc.Active {
 		d.log.Trace().Bool("sid", toc.SID).Bool("active", toc.Active).Msg("decode frame: inactive/SID, emitting silence")
 		return make([]float32, outLen)
+	}
+	// This decoder implements the 16 kHz, high-rate, 60 ms operating point. An
+	// active low-rate frame uses a different internal geometry; decoding it as
+	// 3x20 ms consumes the wrong range-coded symbols and poisons predictor state
+	// for subsequent valid packets. Treat unsupported active frames as loss.
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/aafac5cf46e770f59a1ef2f842d2404154038692/wacore/src/voip/mlow/decoder.rs#L112-L148
+	if toc.SampleRate != 16000 || toc.Flag2 || toc.FrameMs != 60 {
+		d.droppedUnsupported++
+		if d.droppedUnsupported == 1 || d.droppedUnsupported%100 == 0 {
+			d.log.Warn().
+				Uint32("dropped", d.droppedUnsupported).
+				Uint8("toc_byte", frame[0]).
+				Int("sample_rate", toc.SampleRate).
+				Bool("low_rate", toc.Flag2).
+				Int("frame_ms", toc.FrameMs).
+				Msg("dropping unsupported active MLow frame")
+		}
+		return make([]float32, opusFrameSamps)
 	}
 	return d.decodeActiveFrame(frame, outLen)
 }
