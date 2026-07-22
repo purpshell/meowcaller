@@ -383,6 +383,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	var videoDepack rtp.H264Depacketizer
 	var videoAU []byte
 	var appDataRx appDataReceiver
+	var videoWirePacket, videoWireFrame uint64
 
 	// Video send: a second WARP pipeline on our video SSRC, registered on the call so
 	// Call.SendVideoFrame can push encoded H.264 to the relay. Cleared when the loop exits.
@@ -617,6 +618,19 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				e.c.diag.Emit("video", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "seq": vh.SequenceNumber})
 				continue
 			}
+			if videoWirePacket < videoWirePacketLimit {
+				headerLen, _ := rtp.RtpHeaderByteLength(pkt)
+				_, extension, _ := rtp.RtpExtensionProfileAndData(pkt)
+				e.c.diag.Emit("video_wire", map[string]any{
+					"event": "packet", "direction": "in", "call_id": callID,
+					"packet": videoWirePacket, "frame": videoWireFrame,
+					"ssrc": vh.Ssrc, "seq": vh.SequenceNumber, "rtp_ts": vh.Timestamp,
+					"marker": vh.Marker, "header_hex": hex.EncodeToString(pkt[:headerLen]),
+					"extension_hex": hex.EncodeToString(extension),
+					"payload_hex":   hex.EncodeToString(vpayload), "protected_hex": hex.EncodeToString(pkt),
+				})
+			}
+			videoWirePacket++
 			for _, nalu := range videoDepack.Depacketize(vpayload) {
 				videoAU = append(videoAU, 0x00, 0x00, 0x00, 0x01)
 				videoAU = append(videoAU, nalu...)
@@ -624,6 +638,15 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			if vh.Marker && len(videoAU) > 0 {
 				frame := videoAU
 				videoAU = nil
+				if videoWireFrame < videoWireFrameLimit {
+					e.c.diag.Emit("video_wire", map[string]any{
+						"event": "access_unit", "direction": "in", "call_id": callID,
+						"frame": videoWireFrame, "ssrc": vh.Ssrc, "rtp_ts": vh.Timestamp,
+						"idr": rtp.AUHasIDR(frame), "bytes": len(frame),
+						"annexb_hex": hex.EncodeToString(frame),
+					})
+				}
+				videoWireFrame++
 				e.c.diag.Emit("video", map[string]any{"event": "frame", "ssrc": vh.Ssrc, "bytes": len(frame)})
 				if sink := callVideoSink(call); sink != nil {
 					if err := sink.WriteVideo(frame); err != nil {
@@ -710,6 +733,11 @@ func callVideoSink(call *Call) VideoSink {
 }
 
 const defaultVideoRtpStepSamples = 90000 / 30
+
+const (
+	videoWirePacketLimit = 120
+	videoWireFrameLimit  = 30
+)
 
 func videoRtpDurationSamples(duration time.Duration) uint32 {
 	if duration <= 0 {
@@ -831,6 +859,14 @@ func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration
 	if len(payloads) == 0 {
 		return nil
 	}
+	captureWire := vs.frame < videoWireFrameLimit
+	if captureWire {
+		vs.diag.Emit("video_wire", map[string]any{
+			"event": "access_unit", "direction": "out", "call_id": vs.callID,
+			"frame": vs.frame, "ssrc": vs.ssrc, "idr": idr, "bytes": len(au),
+			"duration_ms": duration.Milliseconds(), "annexb_hex": hex.EncodeToString(au),
+		})
+	}
 	vs.stream.SetTimestampStride(videoRtpDurationSamples(duration))
 	mediaFrameInfo := rtp.VideoMediaFrameInfoDelta
 	if idr {
@@ -842,6 +878,18 @@ func (vs *videoSender) protectAccessUnitLocked(au []byte, duration time.Duration
 		packet, err := vs.pipe.ProtectRTP(&header, payload)
 		if err == nil {
 			packets = append(packets, packet)
+			if captureWire {
+				headerBytes := rtp.EncodeRtpHeader(&header)
+				_, extension, _ := rtp.RtpExtensionProfileAndData(headerBytes)
+				vs.diag.Emit("video_wire", map[string]any{
+					"event": "packet", "direction": "out", "call_id": vs.callID,
+					"frame": vs.frame, "packet": i, "ssrc": header.Ssrc,
+					"seq": header.SequenceNumber, "rtp_ts": header.Timestamp, "marker": header.Marker,
+					"header_hex":    hex.EncodeToString(headerBytes),
+					"extension_hex": hex.EncodeToString(extension),
+					"payload_hex":   hex.EncodeToString(payload), "protected_hex": hex.EncodeToString(packet),
+				})
+			}
 		}
 	}
 	if len(packets) > 0 && idr {

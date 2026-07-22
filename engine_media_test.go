@@ -1,9 +1,13 @@
 package meowcaller
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/purpshell/meowcaller/diag"
 	"github.com/purpshell/meowcaller/rtp"
 )
 
@@ -69,6 +73,39 @@ func TestVideoSenderStartsAtIDRAndUsesWhatsappHeaders(t *testing.T) {
 		}
 		if header.VideoExtension == nil || header.VideoExtension.MediaFrameInfo != rtp.VideoMediaFrameInfoIDR {
 			t.Fatalf("packet %d video extension = %+v", i, header.VideoExtension)
+		}
+	}
+}
+
+func TestVideoSenderRecordsWireDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := diag.NewRecorder(dir)
+	if err != nil {
+		t.Fatalf("recorder: %v", err)
+	}
+	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 0x55667788, FrameSamples)
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	sender := &videoSender{
+		pipe: pipe, stream: rtp.NewVideoRtpStream(0x55667788, 4500),
+		callID: "test-call", active: true, keyframeRequired: true, diag: rec,
+	}
+	idr := []byte{0, 0, 0, 1, 0x65, 1, 2, 3}
+	if packets := sender.protectAccessUnit(idr, 50*time.Millisecond); len(packets) != 1 {
+		t.Fatalf("IDR produced %d packets, want 1", len(packets))
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatalf("close recorder: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "video_wire.jsonl"))
+	if err != nil {
+		t.Fatalf("read video wire diagnostics: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`"event":"access_unit"`, `"event":"packet"`, `"direction":"out"`, `"call_id":"test-call"`, `"header_hex":`, `"payload_hex":`, `"protected_hex":`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("video wire diagnostics missing %s: %s", want, text)
 		}
 	}
 }
