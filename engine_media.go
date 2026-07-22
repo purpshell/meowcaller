@@ -188,6 +188,11 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 
 	enc := mlow.NewMlowEncoder(mlow.WithLogger(log))
 	dec := mlow.NewMlowDecoder(mlow.WithLogger(log))
+	audioPlayout := newAudioPlayoutBuffer()
+	defer func() {
+		_, sink := callPlayerSink(call)
+		_ = audioPlayout.Flush(sink)
+	}()
 	txPipe, err := NewMediaPipeline(callKey, selfLID, peerLID, ssrc, FrameSamples, WithLogger(log))
 	if err != nil {
 		return err
@@ -711,8 +716,17 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			"seq": hdr.SequenceNumber, "samples": len(frame),
 			"pcm_rms": rmsFloat32(frame), "payload_len": len(payload),
 		})
-		if _, sink := callPlayerSink(call); sink != nil {
-			_ = sink.WriteFrame(frame)
+		_, sink := callPlayerSink(call)
+		playoutStarted, playoutErr := audioPlayout.Push(hdr.Timestamp, frame, sink)
+		if playoutErr != nil {
+			log.Warn().Err(playoutErr).Msg("failed to write timestamp-aligned WhatsApp audio")
+		}
+		if playoutStarted {
+			log.Info().Int("prefill_ms", audioPlayoutPrefillSamples*1000/SampleRate).Msg("started timestamp-aligned inbound audio playout")
+			e.c.diag.Emit("meta", map[string]any{
+				"event": "audio_playout_started", "call_id": callID,
+				"prefill_ms": audioPlayoutPrefillSamples * 1000 / SampleRate,
+			})
 		}
 		if rtpIn++; rtpIn == 1 {
 			log.Info().Msg("first RTP decoded from relay, inbound audio flowing")
