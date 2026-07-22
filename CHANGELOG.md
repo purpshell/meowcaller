@@ -7,6 +7,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — make incoming final accept bounded and idempotent — `KAT-verified`
+- Replaced the fragile `acceptPending` flag with an explicit, mutex-protected incoming
+  accept state machine. The normal `mute_v2` path still sends immediately, while a
+  configurable 1.5-second fallback starts only after relay transport is ready.
+- Final accept is sent exactly once across duplicate `Answer`, concurrent `mute_v2` and
+  timeout callbacks, cancellation, rejection, remote termination, and late callbacks.
+  Network I/O runs outside the state lock and is cancelled during cleanup; an ambiguous
+  send failure is not retried and is exposed as a typed diagnostic error.
+- Deterministic fake-clock/fake-sender tests cover voice and video calls, both event
+  orderings, absent `mute_v2`, cleanup, send failure, and end-during-send concurrency.
+
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
   registration + a Sink interface), so it reads like any mainstream media API:

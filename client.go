@@ -3,6 +3,7 @@ package meowcaller
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/purpshell/meowcaller/diag"
 	"github.com/rs/zerolog"
@@ -17,10 +18,11 @@ import (
 //
 // The library never configures logging; pass WithLogger to surface its debug/trace.
 type Client struct {
-	wa   *whatsmeow.Client
-	log  zerolog.Logger
-	diag *diag.Recorder
-	eng  *engine
+	wa                            *whatsmeow.Client
+	log                           zerolog.Logger
+	diag                          *diag.Recorder
+	eng                           *engine
+	incomingAcceptFallbackTimeout time.Duration
 
 	mu             sync.Mutex
 	onIncomingCall func(*Call)
@@ -38,7 +40,7 @@ type CallOptions struct {
 // interception is in place before the receive loop starts.
 func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
-	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag}
+	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag, incomingAcceptFallbackTimeout: cfg.incomingAcceptFallbackTimeout}
 	c.eng = newEngine(c)
 	c.eng.install()
 	return c
