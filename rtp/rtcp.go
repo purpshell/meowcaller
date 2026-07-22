@@ -2,6 +2,7 @@ package rtp
 
 import (
 	"encoding/binary"
+	"sync"
 
 	"github.com/rs/zerolog"
 )
@@ -61,6 +62,173 @@ type RtcpSenderStats struct {
 	PacketsSent  uint32
 	OctetsSent   uint32
 	RtpTimestamp uint32
+}
+
+// RtcpReceptionReport is the RFC 3550 receive-stream state carried in a Sender
+// Report. WhatsApp appends 24 bytes of transport statistics after this block.
+type RtcpReceptionReport struct {
+	Ssrc                       uint32
+	FractionLost               uint8
+	CumulativeLost             int32
+	ExtendedHighestSequence    uint32
+	Jitter                     uint32
+	LastSenderReport           uint32
+	DelaySinceLastSenderReport uint32
+}
+
+// RtcpReceptionStats tracks one inbound RTP stream and produces interval loss,
+// jitter, LSR, and DLSR fields for periodic reception reports. Its methods are
+// safe to call from the media receive loop and the RTCP ticker concurrently.
+// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/voip/rtcp.rs#L255-L388
+type RtcpReceptionStats struct {
+	mu sync.Mutex
+
+	ssrc                 uint32
+	hasSsrc              bool
+	baseSequence         uint16
+	maxSequence          uint16
+	sequenceCycles       uint32
+	received             uint32
+	expectedPrior        uint32
+	receivedPrior        uint32
+	transit              uint32
+	hasTransit           bool
+	jitterQ4             uint64
+	lastSenderReport     uint32
+	lastSenderReportAtMs uint64
+	hasSenderReport      bool
+}
+
+// Observe records one authenticated inbound RTP packet.
+func (s *RtcpReceptionStats) Observe(ssrc uint32, sequence uint16, rtpTimestamp uint32, arrivalMs uint64, clockRate uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasSsrc || s.ssrc != ssrc {
+		s.sequenceCycles = 0
+		s.expectedPrior = 0
+		s.receivedPrior = 0
+		s.hasTransit = false
+		s.jitterQ4 = 0
+		s.lastSenderReport = 0
+		s.hasSenderReport = false
+		s.ssrc = ssrc
+		s.hasSsrc = true
+		s.baseSequence = sequence
+		s.maxSequence = sequence
+		s.received = 1
+	} else {
+		delta := sequence - s.maxSequence
+		if delta != 0 && delta < 0x8000 {
+			if sequence < s.maxSequence {
+				s.sequenceCycles += 1 << 16
+			}
+			s.maxSequence = sequence
+		}
+		s.received++
+	}
+
+	arrivalRtp := uint32((uint64(arrivalMs) * uint64(clockRate)) / 1000)
+	transit := arrivalRtp - rtpTimestamp
+	if s.hasTransit {
+		delta := int32(transit - s.transit)
+		distance := uint64(delta)
+		if delta < 0 {
+			distance = uint64(-int64(delta))
+		}
+		decay := (s.jitterQ4 + 8) >> 4
+		s.jitterQ4 += distance
+		if s.jitterQ4 >= decay {
+			s.jitterQ4 -= decay
+		} else {
+			s.jitterQ4 = 0
+		}
+	}
+	s.transit = transit
+	s.hasTransit = true
+}
+
+// ObserveSenderReport records the compact NTP timestamp needed for LSR/DLSR.
+func (s *RtcpReceptionStats) ObserveSenderReport(senderSsrc, ntpSeconds, ntpFraction uint32, arrivalMs uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasSsrc || s.ssrc != senderSsrc {
+		return
+	}
+	s.lastSenderReport = (ntpSeconds << 16) | (ntpFraction >> 16)
+	s.lastSenderReportAtMs = arrivalMs
+	s.hasSenderReport = true
+}
+
+// Report snapshots interval and cumulative reception state.
+func (s *RtcpReceptionStats) Report(nowMs uint64) *RtcpReceptionReport {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasSsrc {
+		return nil
+	}
+	expected := s.sequenceCycles + uint32(s.maxSequence) - uint32(s.baseSequence) + 1
+	expectedInterval := expected - s.expectedPrior
+	receivedInterval := s.received - s.receivedPrior
+	lostInterval := int64(expectedInterval) - int64(receivedInterval)
+	var fractionLost uint8
+	if expectedInterval != 0 && lostInterval > 0 {
+		fraction := (lostInterval * 256) / int64(expectedInterval)
+		if fraction > 255 {
+			fraction = 255
+		}
+		fractionLost = uint8(fraction)
+	}
+	s.expectedPrior = expected
+	s.receivedPrior = s.received
+
+	cumulativeLost := int64(expected) - int64(s.received)
+	if cumulativeLost < -0x80_0000 {
+		cumulativeLost = -0x80_0000
+	} else if cumulativeLost > 0x7f_ffff {
+		cumulativeLost = 0x7f_ffff
+	}
+	var dlsr uint32
+	if s.hasSenderReport {
+		elapsed := nowMs - s.lastSenderReportAtMs
+		if nowMs < s.lastSenderReportAtMs {
+			elapsed = 0
+		}
+		value := elapsed * 65_536 / 1000
+		if value > uint64(^uint32(0)) {
+			value = uint64(^uint32(0))
+		}
+		dlsr = uint32(value)
+	}
+	jitter := s.jitterQ4 >> 4
+	if jitter > uint64(^uint32(0)) {
+		jitter = uint64(^uint32(0))
+	}
+	return &RtcpReceptionReport{
+		Ssrc: s.ssrc, FractionLost: fractionLost, CumulativeLost: int32(cumulativeLost),
+		ExtendedHighestSequence: s.sequenceCycles | uint32(s.maxSequence),
+		Jitter:                  uint32(jitter),
+		LastSenderReport:        s.lastSenderReport, DelaySinceLastSenderReport: dlsr,
+	}
+}
+
+// ParseSenderReportTiming extracts the first SR sender SSRC and NTP timestamp
+// from a compound RTCP packet.
+func ParseSenderReportTiming(data []byte) (senderSsrc, ntpSeconds, ntpFraction uint32, ok bool) {
+	for offset := 0; offset < len(data); {
+		if offset+4 > len(data) {
+			return 0, 0, 0, false
+		}
+		packetLen := (int(binary.BigEndian.Uint16(data[offset+2:offset+4])) + 1) * 4
+		if packetLen < 4 || offset+packetLen > len(data) {
+			return 0, 0, 0, false
+		}
+		packet := data[offset : offset+packetLen]
+		if packet[1] == RtcpPtSr && len(packet) >= 28 {
+			return binary.BigEndian.Uint32(packet[4:8]), binary.BigEndian.Uint32(packet[8:12]), binary.BigEndian.Uint32(packet[12:16]), true
+		}
+		offset += packetLen
+	}
+	return 0, 0, 0, false
 }
 
 // BuildCompactRtcp208 builds the 12-byte compact RTCP (PT 208, RC=1).
@@ -150,14 +318,40 @@ func BuildSourceDescription(localSsrc uint32, cname *[WhatsappRtcpCnameLen]byte,
 
 // BuildSenderReportWithSdes builds WhatsApp's periodic compound SR+SDES packet.
 func BuildSenderReportWithSdes(localSsrc uint32, stats *RtcpSenderStats, nowMs uint64, cname *[WhatsappRtcpCnameLen]byte, profileExtension bool) []byte {
+	return BuildSenderReportWithSdesAndReception(localSsrc, stats, nowMs, cname, nil, profileExtension)
+}
+
+// BuildSenderReportWithSdesAndReception builds WhatsApp's native 1:1 compound
+// report. Its receive block is the RFC 3550 layout followed by 24 zero-valued
+// transport/BWE fields, matching the native unavailable-value representation.
+// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/voip/rtcp.rs#L461-L583
+func BuildSenderReportWithSdesAndReception(localSsrc uint32, stats *RtcpSenderStats, nowMs uint64, cname *[WhatsappRtcpCnameLen]byte, report *RtcpReceptionReport, profileExtension bool) []byte {
 	sr := BuildSenderReport(localSsrc, stats, nowMs)
 	if profileExtension {
 		sr[0] |= 0x10
 	}
 	sdes := BuildSourceDescription(localSsrc, cname, profileExtension)
-	out := make([]byte, 0, len(sr)+len(sdes))
+	out := make([]byte, 0, len(sr)+48+len(sdes))
 	out = append(out, sr[:]...)
+	if report != nil {
+		out[0] |= 1
+		out = appendReceptionReport(out, report)
+		out = append(out, make([]byte, 24)...)
+		binary.BigEndian.PutUint16(out[2:4], uint16(len(out)/4-1))
+	}
 	out = append(out, sdes[:]...)
+	return out
+}
+
+func appendReceptionReport(out []byte, report *RtcpReceptionReport) []byte {
+	out = binary.BigEndian.AppendUint32(out, report.Ssrc)
+	out = append(out, report.FractionLost)
+	lost := uint32(report.CumulativeLost)
+	out = append(out, byte(lost>>16), byte(lost>>8), byte(lost))
+	out = binary.BigEndian.AppendUint32(out, report.ExtendedHighestSequence)
+	out = binary.BigEndian.AppendUint32(out, report.Jitter)
+	out = binary.BigEndian.AppendUint32(out, report.LastSenderReport)
+	out = binary.BigEndian.AppendUint32(out, report.DelaySinceLastSenderReport)
 	return out
 }
 

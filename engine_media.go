@@ -434,6 +434,8 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		e.mu.Unlock()
 	}()
 
+	var audioReception, videoReception rtp.RtcpReceptionStats
+
 	// WhatsApp associates the RTP streams with an SRTCP session. Periodic compound
 	// SR+SDES packets are required for the caller's video to start flowing to the
 	// answerer, and give the peer a target for PLI/FIR recovery feedback.
@@ -446,7 +448,9 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				audioPacket, err := audioRtcp.senderReport(txPipe.SenderStats(), uint64(now.UnixMilli()))
+				nowMs := uint64(now.UnixMilli())
+				audioReport := audioReception.Report(nowMs)
+				audioPacket, err := audioRtcp.senderReport(txPipe.SenderStats(), nowMs, audioReport)
 				if err != nil {
 					return
 				}
@@ -455,7 +459,8 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				}
 				videoStats := txVideoPipe.SenderStats()
 				if videoStats.PacketsSent > 0 {
-					videoPacket, err := videoRtcp.senderReport(videoStats, uint64(now.UnixMilli()))
+					videoReport := videoReception.Report(nowMs)
+					videoPacket, err := videoRtcp.senderReport(videoStats, nowMs, videoReport)
 					if err != nil {
 						return
 					}
@@ -520,6 +525,11 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 					call.requestVideoKeyframe()
 				}
 				log.Debug().Uint32("video_ssrc", videoSelfSsrc).Msg("peer requested a video keyframe")
+			}
+			if reportSsrc, ntpSeconds, ntpFraction, ok := rtp.ParseSenderReportTiming(plain); ok {
+				nowMs := uint64(time.Now().UnixMilli())
+				audioReception.ObserveSenderReport(reportSsrc, ntpSeconds, ntpFraction, nowMs)
+				videoReception.ObserveSenderReport(reportSsrc, ntpSeconds, ntpFraction, nowMs)
 			}
 			e.c.diag.Emit("rtcp", map[string]any{
 				"event": "in", "ssrc": senderSsrc, "index": index,
@@ -618,6 +628,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				e.c.diag.Emit("video", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "seq": vh.SequenceNumber})
 				continue
 			}
+			videoReception.Observe(vh.Ssrc, vh.SequenceNumber, vh.Timestamp, uint64(time.Now().UnixMilli()), 90000)
 			if videoWirePacket < videoWirePacketLimit {
 				headerLen, _ := rtp.RtpHeaderByteLength(pkt)
 				_, extension, _ := rtp.RtpExtensionProfileAndData(pkt)
@@ -686,6 +697,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			e.c.diag.Emit("srtp", map[string]any{"event": "unprotect_failed", "bytes": n})
 			continue
 		}
+		audioReception.Observe(hdr.Ssrc, hdr.SequenceNumber, hdr.Timestamp, uint64(time.Now().UnixMilli()), SampleRate)
 		e.c.diag.Emit("rtp", map[string]any{
 			"event": "in", "ssrc": hdr.Ssrc, "seq": hdr.SequenceNumber,
 			"ts": hdr.Timestamp, "pt": hdr.PayloadType, "marker": hdr.Marker,
@@ -823,10 +835,10 @@ func newMediaSrtcpSender(callKey []byte, selfLID string, ssrc uint32, profile bo
 	}, nil
 }
 
-func (s *mediaSrtcpSender) senderReport(stats rtp.RtcpSenderStats, nowMs uint64) ([]byte, error) {
+func (s *mediaSrtcpSender) senderReport(stats rtp.RtcpSenderStats, nowMs uint64, report *rtp.RtcpReceptionReport) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	plain := rtp.BuildSenderReportWithSdes(s.ssrc, &stats, nowMs, &s.cname, s.profile)
+	plain := rtp.BuildSenderReportWithSdesAndReception(s.ssrc, &stats, nowMs, &s.cname, report, s.profile)
 	packet, err := srtp.ProtectSrtcp(&s.keys, s.ssrc, s.index, plain)
 	if err == nil {
 		s.index++

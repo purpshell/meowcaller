@@ -166,7 +166,7 @@ func TestMediaSrtcpSenderProtectsVideoReport(t *testing.T) {
 		PacketsSent:  3,
 		OctetsSent:   400,
 		RtpTimestamp: 90000,
-	}, 1700000000000)
+	}, 1700000000000, nil)
 	if err != nil {
 		t.Fatalf("sender report: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestMediaSrtcpReceiverRekeysForAnsweringDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sender: %v", err)
 	}
-	packet, err := sender.senderReport(rtp.RtcpSenderStats{PacketsSent: 1}, 1700000000000)
+	packet, err := sender.senderReport(rtp.RtcpSenderStats{PacketsSent: 1}, 1700000000000, nil)
 	if err != nil {
 		t.Fatalf("sender report: %v", err)
 	}

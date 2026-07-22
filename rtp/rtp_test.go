@@ -2,6 +2,7 @@ package rtp
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -266,6 +267,59 @@ func TestWhatsappVideoSenderReportCarriesProfileAndSdes(t *testing.T) {
 	}
 	if compound[28] != 0x91 || compound[29] != RtcpPtSdes {
 		t.Errorf("video SDES header = %x, want 91ca", compound[28:30])
+	}
+}
+
+func TestWhatsappSenderReportCarriesReceptionState(t *testing.T) {
+	cname := BuildWhatsappRtcpCname([12]byte{0, 1, 2, 3, 4, 5, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb})
+	stats := RtcpSenderStats{PacketsSent: 3, OctetsSent: 400, RtpTimestamp: 90000}
+	report := &RtcpReceptionReport{
+		Ssrc: 0x33334444, FractionLost: 5, CumulativeLost: -2,
+		ExtendedHighestSequence: 91, Jitter: 7,
+		LastSenderReport: 8, DelaySinceLastSenderReport: 9,
+	}
+	compound := BuildSenderReportWithSdesAndReception(0x11112222, &stats, 1700000000000, &cname, report, true)
+	if len(compound) != 108 {
+		t.Fatalf("compound length = %d, want 108", len(compound))
+	}
+	if got := compound[:4]; !bytes.Equal(got, []byte{0x91, RtcpPtSr, 0, 18}) {
+		t.Fatalf("SR header = %x, want 91c80012", got)
+	}
+	if got := binary.BigEndian.Uint32(compound[28:32]); got != report.Ssrc {
+		t.Fatalf("reported SSRC = %#x, want %#x", got, report.Ssrc)
+	}
+	if !bytes.Equal(compound[52:76], make([]byte, 24)) {
+		t.Fatalf("WhatsApp report extension is not zero-filled: %x", compound[52:76])
+	}
+	if got := compound[76:80]; !bytes.Equal(got, []byte{0x91, RtcpPtSdes, 0, 7}) {
+		t.Fatalf("SDES header = %x, want 91ca0007", got)
+	}
+}
+
+func TestRtcpReceptionStatsTrackLossWrapAndSenderReport(t *testing.T) {
+	var reception RtcpReceptionStats
+	reception.Observe(0x12345678, 65534, 90000, 1000, 90000)
+	reception.Observe(0x12345678, 65535, 95400, 1060, 90000)
+	reception.Observe(0x12345678, 1, 106200, 1180, 90000)
+	reception.ObserveSenderReport(0x12345678, 0x11223344, 0x55667788, 1200)
+	report := reception.Report(1700)
+	if report == nil {
+		t.Fatal("missing reception report")
+	}
+	if report.ExtendedHighestSequence != 0x00010001 || report.CumulativeLost != 1 {
+		t.Fatalf("sequence/loss = (%#x, %d), want (0x10001, 1)", report.ExtendedHighestSequence, report.CumulativeLost)
+	}
+	if report.LastSenderReport != 0x33445566 || report.DelaySinceLastSenderReport != 32768 {
+		t.Fatalf("LSR/DLSR = (%#x, %d), want (0x33445566, 32768)", report.LastSenderReport, report.DelaySinceLastSenderReport)
+	}
+}
+
+func TestParseSenderReportTiming(t *testing.T) {
+	stats := RtcpSenderStats{}
+	sr := BuildSenderReport(0x12345678, &stats, 1700000000123)
+	ssrc, sec, frac, ok := ParseSenderReportTiming(sr[:])
+	if !ok || ssrc != 0x12345678 || sec == 0 || frac == 0 {
+		t.Fatalf("timing = (%#x, %#x, %#x, %v)", ssrc, sec, frac, ok)
 	}
 }
 
