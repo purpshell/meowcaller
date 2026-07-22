@@ -87,42 +87,10 @@ func DecodeSmplPulses(dec *RangeDecoder, _ *SmplMem, p2, p3, p4, p6, s1 int32) S
 		total = int32(k)
 	}
 
-	// --- recursive binary SPLIT (p3==4 path) ---
-	var split [8]int32
-	if total != 0 {
-		sum := total - subfrLen16*2
-		if sum < 0 {
-			sum = 0
-		}
-		lo := total - 80
-		if lo < 0 {
-			lo = 0
-		}
-		if sum < lo {
-			// min_split2 >= min_split assert path; treat as parse error (zeroed subframes).
-			return res
-		}
-		hiBound := total - lo
-		if sum < hiBound {
-			// window the split CDF at (sum - lo); n entries from the table base.
-			sum += dec.DecodeCDF(cdfWindow(cc.SplitCmf(total), int(sum-lo), int((hiBound-sum)+2)))
-		}
-		if sum > 0 {
-			s0 := smplSplit3537(dec, cc, sum, subfrLen16)
-			split[0] = s0
-			split[1] = sum - s0
-		}
-		if sum < total {
-			s2 := smplSplit3537(dec, cc, total-sum, subfrLen16)
-			split[2] = s2
-			split[3] = (total - sum) - s2
-		}
-		// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/543302e762ef36913b3e2fdf7f84510c43265272/wacore/src/voip/mlow/smpl_pulse.rs#L109-L113 (upstream corrupt-split guard)
-		// C smpl_pulse_coding zeroes the whole split (and n_pulses) on a corrupt -1
-		// from either half, rather than copying the sentinel into res.Subfr.
-		if split[0] == -1 || split[2] == -1 {
-			split = [8]int32{}
-		}
+	// --- recursive binary SPLIT ---
+	split, ok := decodePulseSubframeCounts(dec, cc, total, subfrLen16, p3)
+	if !ok {
+		return res
 	}
 
 	take := p3
@@ -207,6 +175,55 @@ func DecodeSmplPulses(dec *RangeDecoder, _ *SmplMem, p2, p3, p4, p6, s1 int32) S
 		}
 	}
 	return res
+}
+
+func decodePulseSubframeCounts(dec *RangeDecoder, cc *CcTables, total, subfrLen16, p3 int32) (split [8]int32, ok bool) {
+	if total == 0 {
+		return split, true
+	}
+	if p3 == 2 {
+		s0 := smplSplit3537(dec, cc, total, subfrLen16)
+		if s0 < 0 {
+			return split, false
+		}
+		split[0] = s0
+		split[1] = total - s0
+		return split, true
+	}
+	sum := total - subfrLen16*2
+	if sum < 0 {
+		sum = 0
+	}
+	lo := total - 80
+	if lo < 0 {
+		lo = 0
+	}
+	if sum < lo {
+		// min_split2 >= min_split assert path; treat as parse error (zeroed subframes).
+		return split, false
+	}
+	hiBound := total - lo
+	if sum < hiBound {
+		// window the split CDF at (sum - lo); n entries from the table base.
+		sum += dec.DecodeCDF(cdfWindow(cc.SplitCmf(total), int(sum-lo), int((hiBound-sum)+2)))
+	}
+	if sum > 0 {
+		s0 := smplSplit3537(dec, cc, sum, subfrLen16)
+		split[0] = s0
+		split[1] = sum - s0
+	}
+	if sum < total {
+		s2 := smplSplit3537(dec, cc, total-sum, subfrLen16)
+		split[2] = s2
+		split[3] = (total - sum) - s2
+	}
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/543302e762ef36913b3e2fdf7f84510c43265272/wacore/src/voip/mlow/smpl_pulse.rs#L109-L113 (upstream corrupt-split guard)
+	// C smpl_pulse_coding zeroes the whole split (and n_pulses) on a corrupt -1
+	// from either half, rather than copying the sentinel into res.Subfr.
+	if split[0] == -1 || split[2] == -1 {
+		split = [8]int32{}
+	}
+	return split, true
 }
 
 // smplSplit3537 splits count pulses across a range, returning the count assigned to

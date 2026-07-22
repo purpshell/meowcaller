@@ -32,6 +32,9 @@ var decAcbHighBoost = [2]float32{0.35, 0.18}
 // lsfInterpol4: LSF→LPC interpolation factors per subframe, [lsf_interpol_idx][sf].
 var lsfInterpol4 = [2][4]float32{{0.55, 0.88, 1.0, 1.0}, {0.3, 0.65, 0.95, 1.0}}
 
+// lsfInterpol2 is the low-rate, two-subframe LSF interpolation table.
+var lsfInterpol2 = [2][2]float32{{0.75, 1.0}, {0.4, 0.95}}
+
 // celpInterpolKernel: 16-tap symmetric LTP interpolation kernel.
 var celpInterpolKernel = [2 * celpLTPInterpolDelay]float32{
 	-6.3925986e-6, 0.00011064114, -0.0009153038, 0.00484772, -0.018698348, 0.05759091, -0.15997477, 0.6170455,
@@ -83,14 +86,14 @@ func celpDot(a, b []float32, l int) float32 {
 
 // lpcInterpol: per-subframe interpolation of the LSF between prevLsf and lsf, then
 // NLSF→A. Mutates prevLsf to the last interpolated LSF (carried across frames).
-func lpcInterpol(lsf []float32, prevLsf *[SmplOrder]float32, interpol [4]float32, aOut *[SmplSubfrCount][SmplOrder + 1]float32, lsfsOut *[SmplSubfrCount][SmplOrder]float32) {
+func lpcInterpol(lsf []float32, prevLsf *[SmplOrder]float32, interpol []float32, numSubframes int, aOut *[SmplSubfrCount][SmplOrder + 1]float32, lsfsOut *[SmplSubfrCount][SmplOrder]float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celpdec.rs#L126-L155
 	if prevLsf[SmplOrder-1] == 0.0 {
 		copy(prevLsf[:], lsf[:SmplOrder])
 	}
 	var ilsf [SmplOrder]float32
 	prevFactor := float32(-1.0)
-	for j := 0; j < SmplSubfrCount; j++ {
+	for j := 0; j < numSubframes; j++ {
 		if interpol[j] == prevFactor {
 			aOut[j] = aOut[j-1]
 		} else {
@@ -262,7 +265,7 @@ type CelpDecState struct {
 // NewCelpDecState allocates a fresh CELP decoder state.
 func NewCelpDecState() *CelpDecState {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celpdec.rs#L351-L366
-	acbStateLen := SmplSubfrLen + 2*celpMaxPitchLag + celpLTPInterpolDelay
+	acbStateLen := 160 + 2*celpMaxPitchLag + celpLTPInterpolDelay
 	return &CelpDecState{
 		acbState:    make([]float32, acbStateLen),
 		acbStateLen: acbStateLen,
@@ -286,7 +289,15 @@ func (s *CelpDecState) SynthFrame(nlsf []float32, lsfInterpolIdx int, pulses []i
 	if idx > 1 {
 		idx = 1
 	}
-	lpcInterpol(nlsf, &s.lsfPrev, lsfInterpol4[idx], &a, &lsfs)
+	numSubframes := SmplSubfrCount
+	subframeLen := SmplSubfrLen
+	interpol := lsfInterpol4[idx][:]
+	if lowRate {
+		numSubframes = 2
+		subframeLen = SmplIntfLen / numSubframes
+		interpol = lsfInterpol2[idx][:]
+	}
+	lpcInterpol(nlsf, &s.lsfPrev, interpol, numSubframes, &a, &lsfs)
 
 	normBr := SmplGetNormalizedBitrate(params.TotalPulses, frameLength16)
 
@@ -297,37 +308,40 @@ func (s *CelpDecState) SynthFrame(nlsf []float32, lsfInterpolIdx int, pulses []i
 	}
 	for pos := 0; pos < SmplIntfLen; pos++ {
 		if pulses[pos] != 0 {
-			sf := pos / SmplSubfrLen
+			sf := pos / subframeLen
 			lpcRes[pos] = float32(pulses[pos]) * gainTab[params.FcbgIdx[sf]]
 		}
 	}
 
-	const lagsPerSubfr = 2
+	lagsPerSubfr := subframeLen / celpLagSubfrLen
+	acbStateLen := subframeLen + 2*celpMaxPitchLag + celpLTPInterpolDelay
+	acbState := s.acbState[:acbStateLen]
 	var ybuf [SmplOrder + SmplIntfLen]float32
 	copy(ybuf[:SmplOrder], s.lpcSynthMem[:])
 	if s.traceExcPre {
 		s.ExcPre = s.ExcPre[:0]
 	}
-	for sf := 0; sf < SmplSubfrCount; sf++ {
-		base := sf * SmplSubfrLen
-		sfLags := []float32{params.BlockLags[2*sf], params.BlockLags[2*sf+1]}
-		celpDecode(s.acbState, s.acbStateLen, params.Voiced, params.AcbgIdx[sf], sfLags, lagsPerSubfr, SmplSubfrLen, lowRate, normBr, lpcRes[base:base+SmplSubfrLen])
+	for sf := 0; sf < numSubframes; sf++ {
+		base := sf * subframeLen
+		lagBase := sf * lagsPerSubfr
+		sfLags := params.BlockLags[lagBase : lagBase+lagsPerSubfr]
+		celpDecode(acbState, acbStateLen, params.Voiced, params.AcbgIdx[sf], sfLags, lagsPerSubfr, subframeLen, lowRate, normBr, lpcRes[base:base+subframeLen])
 
 		if s.traceExcPre {
-			s.ExcPre = append(s.ExcPre, lpcRes[base:base+SmplSubfrLen]...)
+			s.ExcPre = append(s.ExcPre, lpcRes[base:base+subframeLen]...)
 		}
 
-		nrgres := SmplDecodeResnrg(params.NrgresDbqQ14[sf], int32(SmplSubfrLen))
+		nrgres := SmplDecodeResnrg(params.NrgresDbqQ14[sf], int32(subframeLen))
 		if !params.Voiced {
 			s.prevNrgres = nrgres
 		}
 		var noise [160]float32
-		SmplCelpGenNoise(&s.noise, lpcRes[base:base+SmplSubfrLen], SmplSubfrLen, params.Voiced, params.SfPulses[sf], nrgres, params.FcbgIdx[sf], lsfs[sf][:], normBr, gains.uv[:], noise[:])
-		for i := 0; i < SmplSubfrLen; i++ {
+		SmplCelpGenNoise(&s.noise, lpcRes[base:base+subframeLen], subframeLen, params.Voiced, params.SfPulses[sf], nrgres, params.FcbgIdx[sf], lsfs[sf][:], normBr, gains.uv[:], noise[:])
+		for i := 0; i < subframeLen; i++ {
 			lpcRes[base+i] += noise[i]
 		}
 
-		filtAR16(lpcRes[base:base+SmplSubfrLen], &a[sf], ybuf[:], SmplOrder+base, SmplSubfrLen)
+		filtAR16(lpcRes[base:base+subframeLen], &a[sf], ybuf[:], SmplOrder+base, subframeLen)
 	}
 	copy(out[:SmplIntfLen], ybuf[SmplOrder:])
 	copy(s.lpcSynthMem[:], ybuf[SmplOrder+SmplIntfLen-SmplOrder:])

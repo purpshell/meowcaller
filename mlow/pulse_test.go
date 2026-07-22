@@ -60,3 +60,25 @@ func TestDecodeSmplPulses(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeLowRatePulseSplitUsesTwoSubframes(t *testing.T) {
+	const total = int32(10)
+	const first = int32(4)
+	cc := LoadCcTables()
+	cdf := cdfWindow(cc.SplitCmf(total), 0, int(total+2))
+	enc := NewRangeEncoder(32)
+	enc.EncodeCDF(first, cdf)
+	enc.Done()
+	if enc.Err() != 0 {
+		t.Fatalf("encode split: %d", enc.Err())
+	}
+
+	dec := NewRangeDecoder(enc.Bytes())
+	got, ok := decodePulseSubframeCounts(dec, cc, total, 16, 2)
+	if !ok {
+		t.Fatal("two-subframe split rejected")
+	}
+	if got[0] != first || got[1] != total-first {
+		t.Fatalf("split = %v, want [%d %d]", got[:2], first, total-first)
+	}
+}

@@ -1,11 +1,11 @@
 package mlow
 
 import (
-	"slices"
+	"math"
 	"testing"
 )
 
-func TestUnsupportedLowRateFrameDoesNotPoisonDecoderState(t *testing.T) {
+func TestOperatingPointChangeResetsDecoderState(t *testing.T) {
 	pcm := make([]float32, opusFrameSamps)
 	for i := range pcm {
 		pcm[i] = 0.05
@@ -15,23 +15,37 @@ func TestUnsupportedLowRateFrameDoesNotPoisonDecoderState(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 
-	clean := NewMlowDecoder()
-	want := clean.Decode(encoded)
-	guarded := NewMlowDecoder()
+	decoder := NewMlowDecoder()
+	decoder.Decode(encoded)
+	highRateState := decoder.state
 	lowRate := append([]byte(nil), encoded...)
 	lowRate[0] |= 0x04
-	if got := guarded.Decode(lowRate); len(got) != opusFrameSamps || rms(got) != 0 {
-		t.Fatalf("unsupported frame produced %d non-silent samples", len(got))
+	if got := decoder.Decode(lowRate); len(got) != opusFrameSamps {
+		t.Fatalf("low-rate frame produced %d samples", len(got))
 	}
-	if got := guarded.Decode(encoded); !slices.Equal(got, want) {
-		t.Fatal("unsupported frame changed decoder predictor state")
+	if decoder.state == highRateState {
+		t.Fatal("operating-point change retained the old predictor state")
+	}
+	if decoder.activeConfig != 1 {
+		t.Fatalf("active config = %d, want 1", decoder.activeConfig)
 	}
 }
 
-func rms(frame []float32) float32 {
-	var sum float32
-	for _, sample := range frame {
-		sum += sample * sample
+func TestLowRateCelpUsesTwoSubframes(t *testing.T) {
+	state := NewCelpDecState()
+	current := make([]float32, SmplOrder)
+	var previous [SmplOrder]float32
+	for i := range current {
+		previous[i] = 0.1 + float32(i)*0.14
+		current[i] = previous[i] + 0.02
+		state.lsfPrev[i] = previous[i]
 	}
-	return sum
+	var out [SmplIntfLen]float32
+	state.SynthFrame(current, 1, make([]int32, SmplIntfLen), &CelpDecParams{}, true, SmplIntfLen, out[:])
+	for i := range current {
+		want := previous[i]*0.05 + current[i]*0.95
+		if math.Abs(float64(state.lsfPrev[i]-want)) > 1e-6 {
+			t.Fatalf("lsfPrev[%d] = %f, want %f", i, state.lsfPrev[i], want)
+		}
+	}
 }
