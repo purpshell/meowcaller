@@ -128,12 +128,18 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	m.accept.sendCancel = cancel
 	call, to, creator := m.call, m.from, m.creator
 	isVideo := m.localVideo || m.remoteVideo
+	var relayTE []byte
+	if endpoint := getMediaRelayEndpoint(m.relay); endpoint != nil {
+		relayTE = append([]byte(nil), endpoint.wireAddress...)
+	}
 	e.mu.Unlock()
 
 	e.notifyIncomingAccept(call, "incoming_accept_send_started", trigger, nil)
 	accept := signaling.BuildAccept(&signaling.AcceptParams{
 		CallID: callID, To: to, CallCreator: creator,
 		AudioRates: []string{"16000"},
+		RelayTe:    relayTE,
+		Capability: signaling.CapabilityOffer,
 		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
 		Video:      isVideo,
 	})

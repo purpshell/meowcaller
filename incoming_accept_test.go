@@ -108,10 +108,43 @@ func newAcceptHarness(video, relayReady bool) *acceptHarness {
 		accept: incomingAccept{preacceptSent: true},
 	}
 	if relayReady {
-		m.relay = &relayData{}
+		m.relay = &relayData{endpoints: []relayEndpoint{{
+			relayName:   "test-relay",
+			wireAddress: []byte{57, 144, 233, 57, 0x0d, 0x96},
+		}}}
 	}
 	h.eng.calls[h.call.id] = m
 	return h
+}
+
+func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing.T) {
+	h := newAcceptHarness(true, true)
+	h.eng.onCallRaw(h.muteNode())
+	if err := h.call.Answer(); err != nil {
+		t.Fatal(err)
+	}
+
+	accept := h.firstAccept(t)
+	action := accept.GetChildren()[0]
+	var relayTE, capability *waBinary.Node
+	for i := range action.GetChildren() {
+		child := &action.GetChildren()[i]
+		switch child.Tag {
+		case "te":
+			relayTE = child
+		case "capability":
+			capability = child
+		}
+	}
+	if relayTE == nil {
+		t.Fatal("final accept omitted the selected relay endpoint")
+	}
+	if got := nodeBytes(relayTE); string(got) != string([]byte{57, 144, 233, 57, 0x0d, 0x96}) {
+		t.Fatalf("final accept relay endpoint = %x, want selected relay endpoint", got)
+	}
+	if capability == nil {
+		t.Fatal("final accept omitted the negotiated capability")
+	}
 }
 
 func (h *acceptHarness) acceptCount() int {

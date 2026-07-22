@@ -1202,6 +1202,7 @@ type relayEndpoint struct {
 	tokenID     uint32
 	authTokenID uint32
 	isFNA       bool
+	wireAddress []byte // original six-byte IPv4:port blob echoed in the final accept
 	addresses   []relayAddress
 }
 
@@ -1335,6 +1336,7 @@ func parseRelayData(node *waBinary.Node) *relayData {
 			tokenID:     attrUint(te2, "token_id"),
 			authTokenID: attrUint(te2, "auth_token_id"),
 			isFNA:       te2.AttrGetter().String("is_fna") == "1",
+			wireAddress: append([]byte(nil), ab...),
 			addresses: []relayAddress{{
 				ipv4: fmt.Sprintf("%d.%d.%d.%d", ab[0], ab[1], ab[2], ab[3]),
 				port: binary.BigEndian.Uint16(ab[4:6]),

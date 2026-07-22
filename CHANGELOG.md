@@ -7,6 +7,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — complete the incoming final-accept relay selection — `KAT-verified`
+- The incoming final `<accept>` now echoes the six-byte address of the relay endpoint
+  selected for media and includes the negotiated capability blob. Previously the engine
+  waited for relay readiness but discarded that endpoint when it built the accept, so a
+  peer could acknowledge video state while the relay never bridged its RTP.
+- Added a deterministic stanza test that fails when either the selected `<te priority="2">`
+  endpoint or capability is omitted. The same path is shared by incoming voice and video.
+
 ### meowcaller — make incoming final accept bounded and idempotent — `KAT-verified`
 - Replaced the fragile `acceptPending` flag with an explicit, mutex-protected incoming
   accept state machine. The normal `mute_v2` path still sends immediately, while a
