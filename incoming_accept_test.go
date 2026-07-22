@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/purpshell/meowcaller/signaling"
 	"github.com/rs/zerolog"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
@@ -144,6 +145,32 @@ func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing
 	}
 	if capability == nil {
 		t.Fatal("final accept omitted the negotiated capability")
+	}
+}
+
+func TestIncomingVideoAnnouncesLocalVideoAfterFinalAcceptExactlyOnce(t *testing.T) {
+	h := newAcceptHarness(true, true)
+	h.eng.onCallRaw(h.muteNode())
+	if err := h.call.Answer(); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.onCallRaw(h.muteNode())
+
+	h.mu.Lock()
+	nodes := append([]waBinary.Node(nil), h.nodes...)
+	h.mu.Unlock()
+	if len(nodes) != 2 {
+		t.Fatalf("sent nodes = %d, want final accept followed by one video announcement", len(nodes))
+	}
+	if got := nodes[0].GetChildren()[0].Tag; got != "accept" {
+		t.Fatalf("first action = %s, want accept", got)
+	}
+	video := nodes[1].GetChildren()[0]
+	if video.Tag != "video" || video.AttrGetter().Int("state") != signaling.VideoStateEnabled {
+		t.Fatalf("second action = <%s state=%d>, want <video state=1>", video.Tag, video.AttrGetter().Int("state"))
+	}
+	if got := video.AttrGetter().String("dec"); got != signaling.VideoStateDecH264 {
+		t.Fatalf("video announcement dec = %q, want H264", got)
 	}
 }
 

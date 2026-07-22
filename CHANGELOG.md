@@ -7,6 +7,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — announce callee video after incoming acceptance — `KAT-verified`
+- After the established audio-shaped final accept succeeds for a from-start incoming video
+  call, the callee now sends one standalone `<video state="1" dec="H264">`. This announces
+  that the callee is also sending video without reintroducing the experimental video child
+  that prevented caller media from starting.
+- A deterministic test pins ordering (`accept` then `video state=1`) and idempotency across
+  repeated `mute_v2` callbacks. Cleanup still cancels both network writes through one context.
+
 ### signaling — restore the established from-start video answer shape — `KAT-verified`
 - Incoming video now uses the same audio-shaped `preaccept`/`accept` negotiation as an
   incoming voice call. Removed the unvalidated `<video>` children that had been added to

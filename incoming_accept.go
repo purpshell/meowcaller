@@ -127,7 +127,8 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.accept.sendCancel = cancel
 	call, to, creator := m.call, m.from, m.creator
-	isVideo := m.localVideo || m.remoteVideo
+	localVideo := m.localVideo
+	isVideo := localVideo || m.remoteVideo
 	var relayTE []byte
 	if endpoint := getMediaRelayEndpoint(m.relay); endpoint != nil {
 		relayTE = append([]byte(nil), endpoint.wireAddress...)
@@ -145,6 +146,14 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	})
 	accept.Attrs["id"] = e.nextCallNodeID()
 	err := e.transmitCallNode(ctx, accept)
+	var videoErr error
+	if err == nil && localVideo {
+		videoEnabled := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
+			CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
+			State: signaling.VideoStateEnabled, Dec: signaling.VideoStateDecH264,
+		})
+		videoErr = e.transmitCallNode(ctx, videoEnabled)
+	}
 	cancel()
 
 	e.mu.Lock()
@@ -168,5 +177,13 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 
 	e.c.log.Info().Str("call_id", callID).Str("trigger", string(trigger)).Bool("video", isVideo).Uint32("accept_send_count", 1).Msg("incoming accept sent")
 	e.notifyIncomingAccept(call, "incoming_accept_sent", trigger, nil)
+	if videoErr != nil {
+		typed := &IncomingAcceptError{Kind: "video_enable_send_failed", Err: videoErr}
+		e.c.log.Warn().Err(typed).Str("call_id", callID).Msg("incoming local video announcement failed")
+		e.notifyIncomingAccept(call, "incoming_video_announce_failed", trigger, typed)
+	} else if localVideo {
+		e.c.log.Info().Str("call_id", callID).Msg("incoming local video enabled announced")
+		e.notifyIncomingAccept(call, "incoming_video_enabled_announced", trigger, nil)
+	}
 	return nil
 }
