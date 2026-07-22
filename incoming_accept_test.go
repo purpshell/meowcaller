@@ -148,7 +148,7 @@ func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing
 	}
 }
 
-func TestIncomingVideoAnnouncesLocalVideoAfterFinalAcceptExactlyOnce(t *testing.T) {
+func TestIncomingVideoNegotiatesCalleeVideoInFinalAcceptExactlyOnce(t *testing.T) {
 	h := newAcceptHarness(true, true)
 	h.eng.onCallRaw(h.muteNode())
 	if err := h.call.Answer(); err != nil {
@@ -159,18 +159,27 @@ func TestIncomingVideoAnnouncesLocalVideoAfterFinalAcceptExactlyOnce(t *testing.
 	h.mu.Lock()
 	nodes := append([]waBinary.Node(nil), h.nodes...)
 	h.mu.Unlock()
-	if len(nodes) != 2 {
-		t.Fatalf("sent nodes = %d, want final accept followed by one video announcement", len(nodes))
+	if len(nodes) != 1 {
+		t.Fatalf("sent nodes = %d, want exactly one final accept and no standalone video announcement", len(nodes))
 	}
 	if got := nodes[0].GetChildren()[0].Tag; got != "accept" {
 		t.Fatalf("first action = %s, want accept", got)
 	}
-	video := nodes[1].GetChildren()[0]
-	if video.Tag != "video" || video.AttrGetter().Int("state") != signaling.VideoStateEnabled {
-		t.Fatalf("second action = <%s state=%d>, want <video state=1>", video.Tag, video.AttrGetter().Int("state"))
+	var video *waBinary.Node
+	for i := range nodes[0].GetChildren()[0].GetChildren() {
+		child := &nodes[0].GetChildren()[0].GetChildren()[i]
+		if child.Tag == "video" {
+			video = child
+		}
+	}
+	if video == nil {
+		t.Fatal("final accept omitted the callee video marker")
 	}
 	if got := video.AttrGetter().String("dec"); got != signaling.VideoStateDecH264 {
-		t.Fatalf("video announcement dec = %q, want H264", got)
+		t.Fatalf("final accept video dec = %q, want H264", got)
+	}
+	if got := video.AttrGetter().String("device_orientation"); got != "0" {
+		t.Fatalf("final accept video device_orientation = %q, want 0", got)
 	}
 }
 
@@ -395,7 +404,7 @@ func TestIncomingAcceptEndDuringSendCancelsIOAndDoesNotCommit(t *testing.T) {
 	}
 }
 
-func TestIncomingVoiceAndVideoUseTheSameFinalAcceptHandshake(t *testing.T) {
+func TestIncomingVoiceAcceptStaysAudioOnlyAndVideoAcceptAdvertisesDecoder(t *testing.T) {
 	for _, video := range []bool{false, true} {
 		t.Run(map[bool]string{false: "voice", true: "video"}[video], func(t *testing.T) {
 			h := newAcceptHarness(video, true)
@@ -411,8 +420,8 @@ func TestIncomingVoiceAndVideoUseTheSameFinalAcceptHandshake(t *testing.T) {
 					hasVideo = true
 				}
 			}
-			if hasVideo {
-				t.Fatal("final accept included an experimental video child")
+			if hasVideo != video {
+				t.Fatalf("final accept has video child = %t, want %t", hasVideo, video)
 			}
 		})
 	}

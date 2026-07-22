@@ -9,9 +9,9 @@ import (
 )
 
 // Video call signaling follows the 1:1 video lifecycle implemented by whatsapp-rust.
-// A from-start video call advertises a <video> child in the offer. The answer keeps the
-// established audio-shaped preaccept/accept handshake; later state changes use standalone
-// <video state=N> call stanzas.
+// A from-start video call advertises a <video> child in the offer and final accept. The
+// preaccept remains audio-shaped; standalone <video state=N> stanzas are only for in-call
+// transitions such as upgrade, downgrade, and orientation changes.
 
 // VideoCodecH264 is the lowercase codec token used by bridge internals.
 const VideoCodecH264 = "h264"
@@ -117,6 +117,16 @@ func videoOfferNode() waBinary.Node {
 		"dec":                videoOfferDecH264,
 		"screen_width":       "1920",
 		"screen_height":      "1080",
+		"device_orientation": "0",
+	}}
+}
+
+// videoAcceptNode builds the captured callee marker for a from-start video final accept.
+// Its position immediately after the audio children is part of the observed wire shape.
+func videoAcceptNode() waBinary.Node {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L603-L608
+	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
+		"dec":                VideoStateDecH264,
 		"device_orientation": "0",
 	}}
 }

@@ -7,18 +7,19 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### meowcaller — announce callee video after incoming acceptance — `KAT-verified`
-- After the established audio-shaped final accept succeeds for a from-start incoming video
-  call, the callee now sends one standalone `<video state="1" dec="H264">`. This announces
-  that the callee is also sending video without reintroducing the experimental video child
-  that prevented caller media from starting.
-- A deterministic test pins ordering (`accept` then `video state=1`) and idempotency across
-  repeated `mute_v2` callbacks. Cleanup still cancels both network writes through one context.
+### meowcaller — negotiate callee video in the incoming final accept — `KAT-verified`
+- A from-start incoming video call now includes the captured callee marker
+  `<video dec="H264" device_orientation="0">` inside the final `<accept>`, immediately after
+  the audio selection. Voice accepts remain byte-for-byte free of video children.
+- Removed the standalone `<video state="1">` sent immediately after acceptance. A real-call
+  diagnostic showed that it collided with the caller's from-start state sequence and stopped
+  inbound video; standalone states remain reserved for explicit in-call transitions.
+- Deterministic tests pin the accept child order, exact video attrs, voice compatibility,
+  single-send idempotency, and absence of a second video-state stanza.
 
-### signaling — restore the established from-start video answer shape — `KAT-verified`
-- Incoming video now uses the same audio-shaped `preaccept`/`accept` negotiation as an
-  incoming voice call. Removed the unvalidated `<video>` children that had been added to
-  those answer stanzas; the original offer remains the from-start video marker.
+### signaling — restore the established from-start video preaccept and capability — `KAT-verified`
+- Incoming video now keeps the same audio-shaped `preaccept` as an incoming voice call. The
+  original offer and the captured final-accept video child mark the call as from-start video.
 - Restored the documented capability bytes (`e4 bb 07` for preaccept and `e4 bb 13` for
   accept). The distinct observed video-offer capability (`e0 fa 13`) is unchanged.
 - A real incoming call had accepted signaling and local RTP but no peer RTP while using

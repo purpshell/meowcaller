@@ -48,22 +48,28 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	}
 }
 
-// TestFromStartVideoAcceptUsesTheEstablishedHandshake pins the observed answer shape:
-// the offer marks the call as video, while preaccept/accept keep the same media-selection
-// children as audio. Video state is announced separately after acceptance.
-func TestFromStartVideoAcceptUsesTheEstablishedHandshake(t *testing.T) {
+// TestFromStartVideoAcceptAdvertisesTheCalleeDecoder pins the captured answer shape:
+// unlike preaccept, the final accept carries the callee-side video decoder marker.
+func TestFromStartVideoAcceptAdvertisesTheCalleeDecoder(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
 		CallID: "CID", To: peer, CallCreator: creator,
 		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6),
 		Capability: CapabilityOffer, Video: true,
 	})
-	want := []string{"audio", "te", "net", "encopt", "capability"}
+	want := []string{"audio", "video", "te", "net", "encopt", "capability"}
 	if got := childTags(t, accept); !eqTags(got, want) {
 		t.Errorf("accept tags = %v, want %v", got, want)
 	}
-	if _, ok := getChild(t, contentNodes(t, accept)[0], "video"); ok {
-		t.Fatal("from-start video accept must not carry an experimental video child")
+	video, ok := getChild(t, contentNodes(t, accept)[0], "video")
+	if !ok {
+		t.Fatal("from-start video accept omitted the callee video marker")
+	}
+	if dec, _ := attrString(video, "dec"); dec != "H264" {
+		t.Errorf("video accept dec = %q, want H264", dec)
+	}
+	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
+		t.Errorf("video accept device_orientation = %q, want 0", orientation)
 	}
 }
 
