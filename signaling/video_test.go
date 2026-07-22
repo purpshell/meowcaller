@@ -48,45 +48,82 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	}
 }
 
-// TestFromStartVideoAcceptAdvertisesTheCalleeEncoder pins the WaCalls H.264 answer
-// shape: the video marker is appended after the established audio/relay handshake.
-func TestFromStartVideoAcceptAdvertisesTheCalleeEncoder(t *testing.T) {
+// TestFromStartVideoAcceptMatchesCapturedCalleeShape pins the complete captured answer.
+func TestFromStartVideoAcceptMatchesCapturedCalleeShape(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
-		CallID: "CID", To: peer, CallCreator: creator,
+		CallID: "CID", To: peer, WrapperID: "accept-wrap", CallCreator: creator,
 		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6),
-		Capability: CapabilityOffer, Video: true,
+		Capability: CapabilityOffer,
+		Metadata: waBinary.Attrs{
+			"peer_abtest_bucket":         "bucket-a",
+			"peer_abtest_bucket_id_list": "11,22",
+		},
+		Video: true,
 	})
-	want := []string{"audio", "te", "net", "encopt", "capability", "video"}
+	want := []string{"audio", "video", "te", "net", "encopt", "metadata", "capability"}
 	if got := childTags(t, accept); !eqTags(got, want) {
 		t.Errorf("accept tags = %v, want %v", got, want)
+	}
+	if id, _ := attrString(accept, "id"); id != "accept-wrap" {
+		t.Errorf("accept wrapper id = %q, want accept-wrap", id)
 	}
 	video, ok := getChild(t, contentNodes(t, accept)[0], "video")
 	if !ok {
 		t.Fatal("from-start video accept omitted the callee video marker")
 	}
-	if enc, _ := attrString(video, "enc"); enc != VideoCodecH264 {
-		t.Errorf("video accept enc = %q, want %s", enc, VideoCodecH264)
+	if dec, _ := attrString(video, "dec"); dec != VideoStateDecH264 {
+		t.Errorf("video accept dec = %q, want %s", dec, VideoStateDecH264)
 	}
-	if _, has := video.Attrs["dec"]; has {
-		t.Error("video accept must not carry the decoder-state attribute")
+	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
+		t.Errorf("video accept device_orientation = %q, want 0", orientation)
 	}
-	if _, has := video.Attrs["device_orientation"]; has {
-		t.Error("video accept must not carry a standalone-state orientation")
+	if _, has := video.Attrs["enc"]; has {
+		t.Error("video accept must not carry an encoder attribute")
+	}
+	action := contentNodes(t, accept)[0]
+	metadata, ok := getChild(t, action, "metadata")
+	if !ok {
+		t.Fatal("video accept metadata missing")
+	}
+	if got, _ := attrString(metadata, "peer_abtest_bucket"); got != "bucket-a" {
+		t.Errorf("peer_abtest_bucket = %q, want bucket-a", got)
+	}
+	if got, _ := attrString(metadata, "peer_abtest_bucket_id_list"); got != "11,22" {
+		t.Errorf("peer_abtest_bucket_id_list = %q, want 11,22", got)
+	}
+	capability, ok := getChild(t, action, "capability")
+	if !ok {
+		t.Fatal("video accept capability missing")
+	}
+	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
+	if got, ok := capability.Content.([]byte); !ok || !bytes.Equal(got, wantCapability) {
+		t.Errorf("video accept capability = %x, want %x", got, wantCapability)
 	}
 }
 
-func TestVideoPreacceptUsesPreacceptCapability(t *testing.T) {
+func TestVideoPreacceptMatchesCapturedCalleeShape(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	pre := BuildPreaccept("CID", peer, creator, "wrap", []string{"16000"}, true)
 
-	want := []string{"audio", "encopt", "capability"}
+	want := []string{"audio", "video", "encopt", "capability"}
 	if got := childTags(t, pre); !eqTags(got, want) {
 		t.Errorf("video preaccept tags = %v, want %v", got, want)
 	}
 	action := contentNodes(t, pre)[0]
-	if _, ok := getChild(t, action, "video"); ok {
-		t.Fatal("video preaccept must not carry an experimental video child")
+	video, ok := getChild(t, action, "video")
+	if !ok {
+		t.Fatal("video preaccept child missing")
+	}
+	for attr, wantValue := range map[string]string{
+		"dec":                "H264",
+		"device_orientation": "0",
+		"screen_width":       "0",
+		"screen_height":      "0",
+	} {
+		if got, _ := attrString(video, attr); got != wantValue {
+			t.Errorf("video preaccept %s = %q, want %q", attr, got, wantValue)
+		}
 	}
 	capability, ok := getChild(t, action, "capability")
 	if !ok {
@@ -96,9 +133,62 @@ func TestVideoPreacceptUsesPreacceptCapability(t *testing.T) {
 	if !ok {
 		t.Fatalf("video preaccept capability content = %T, want []byte", capability.Content)
 	}
-	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
+	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
 	if !bytes.Equal(gotCapability, wantCapability) {
 		t.Errorf("video preaccept capability = %x, want %x", gotCapability, wantCapability)
+	}
+}
+
+func TestVoicePreacceptKeepsAudioOnlyCapability(t *testing.T) {
+	peer, creator := peerJID(), creatorJID()
+	pre := BuildPreaccept("CID", peer, creator, "wrap", []string{"16000"}, false)
+	action := contentNodes(t, pre)[0]
+	if _, ok := getChild(t, action, "video"); ok {
+		t.Fatal("voice preaccept unexpectedly contains video")
+	}
+	capability, ok := getChild(t, action, "capability")
+	if !ok {
+		t.Fatal("voice preaccept capability missing")
+	}
+	want := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x07}
+	if got, ok := capability.Content.([]byte); !ok || !bytes.Equal(got, want) {
+		t.Errorf("voice preaccept capability = %x, want %x", got, want)
+	}
+}
+
+func TestVoiceOfferAndAcceptUseCapturedCapabilityWithoutVideo(t *testing.T) {
+	peer, creator := peerJID(), creatorJID()
+	dk := OfferDeviceKey{DeviceJid: peer, Ciphertext: []byte{1}, EncType: "pkmsg"}
+	offer := BuildOffer(&OfferParams{
+		CallID: "CID", To: peer, CallCreator: creator,
+		DeviceKeys: []OfferDeviceKey{dk}, Capability: CapabilityOffer,
+	})
+	offerAction := contentNodes(t, offer)[0]
+	if _, ok := getChild(t, offerAction, "video"); ok {
+		t.Fatal("voice offer unexpectedly contains video")
+	}
+	assertCapabilityBytes(t, offerAction, []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13})
+
+	accept := BuildAccept(&AcceptParams{
+		CallID: "CID", To: peer, WrapperID: "accept-wrap", CallCreator: creator,
+		AudioRates: []string{"16000"}, Capability: CapabilityOffer,
+	})
+	acceptAction := contentNodes(t, accept)[0]
+	if _, ok := getChild(t, acceptAction, "video"); ok {
+		t.Fatal("voice accept unexpectedly contains video")
+	}
+	assertCapabilityBytes(t, acceptAction, []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13})
+}
+
+func assertCapabilityBytes(t *testing.T, action waBinary.Node, want []byte) {
+	t.Helper()
+	capability, ok := getChild(t, action, "capability")
+	if !ok {
+		t.Fatal("capability child missing")
+	}
+	got, ok := capability.Content.([]byte)
+	if !ok || !bytes.Equal(got, want) {
+		t.Errorf("capability = %x, want %x", got, want)
 	}
 }
 

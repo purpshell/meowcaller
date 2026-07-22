@@ -7,6 +7,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### signaling — mirror the captured incoming video handshake — `implemented`
+- Incoming video `preaccept` now advertises the captured H.264 decoder, zero-sized
+  preaccept geometry, and the `e0 bb 13` callee capability. Voice preaccept remains
+  audio-only and uses `e0 bb 07`.
+- Incoming video `accept` now places `<video dec="H264" device_orientation="0">`
+  directly after audio, then metadata before capability, matching the captured
+  child order as one complete wire shape rather than changing isolated fields.
+- Deterministic stanza tests pin the child order, wrapper ids, exact video attributes,
+  capability bytes, metadata position, and voice compatibility. Live relay validation
+  remains required before this wire shape can be called KAT-verified.
+
 ### meowcaller — negotiate callee video in the incoming final accept — `KAT-verified`
 - A from-start incoming video call now appends the WaCalls H.264 callee marker
   `<video enc="h264">` at the end of the final `<accept>`. Keeping the established
