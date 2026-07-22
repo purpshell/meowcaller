@@ -121,13 +121,12 @@ func videoOfferNode() waBinary.Node {
 	}}
 }
 
-// videoAcceptNode builds the captured callee marker for a from-start video final accept.
-// Its position immediately after the audio children is part of the observed wire shape.
+// videoAcceptNode advertises the callee's H.264 encoder at the end of a from-start
+// video final accept, preserving the established audio/relay child sequence.
 func videoAcceptNode() waBinary.Node {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L603-L608
+	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/signaling/signaling_build.go#L111-L113
 	return waBinary.Node{Tag: "video", Attrs: waBinary.Attrs{
-		"dec":                VideoStateDecH264,
-		"device_orientation": "0",
+		"enc": VideoCodecH264,
 	}}
 }
 

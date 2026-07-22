@@ -8,9 +8,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 ## [Unreleased]
 
 ### meowcaller — negotiate callee video in the incoming final accept — `KAT-verified`
-- A from-start incoming video call now includes the captured callee marker
-  `<video dec="H264" device_orientation="0">` inside the final `<accept>`, immediately after
-  the audio selection. Voice accepts remain byte-for-byte free of video children.
+- A from-start incoming video call now appends the WaCalls H.264 callee marker
+  `<video enc="h264">` at the end of the final `<accept>`. Keeping the established
+  audio/relay/capability sequence intact is load-bearing; voice accepts remain free of video.
+- Removed the decoder-state-shaped marker (`dec="H264" device_orientation="0"`) from the
+  accept. A real incoming call using that shape sent PC video but received zero audio/video
+  frames from the phone, showing that an in-call decoder state is not an accept-time encoder
+  advertisement for this peer.
 - Removed the standalone `<video state="1">` sent immediately after acceptance. A real-call
   diagnostic showed that it collided with the caller's from-start state sequence and stopped
   inbound video; standalone states remain reserved for explicit in-call transitions.

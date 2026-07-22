@@ -123,10 +123,10 @@ type AcceptParams struct {
 	Video        bool           // true = include the captured callee-side <video> marker
 }
 
-// BuildAccept builds <accept>: audio → [video] → [te priority=2] → net medium=2 → encopt →
-// [capability] → [metadata] → [rte] → [voip_settings].
+// BuildAccept builds <accept>: audio → [te priority=2] → net medium=2 → encopt →
+// [capability] → [metadata] → [rte] → [voip_settings] → [video].
 func BuildAccept(p *AcceptParams, log ...zerolog.Logger) waBinary.Node {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L542-L608
+	// Source of truth: https://github.com/JotaDev66/WaCalls/blob/2d6a1f666426049a89ef9541414e771acdcf8a16/internal/voip/signaling/signaling_build.go#L85-L126
 	lg := pickLog(log)
 	lg.Debug().
 		Str("call_id", p.CallID).
@@ -141,9 +141,6 @@ func BuildAccept(p *AcceptParams, log ...zerolog.Logger) waBinary.Node {
 	children := make([]waBinary.Node, 0, len(p.AudioRates)+6)
 	for _, rate := range p.AudioRates {
 		children = append(children, audioOpus(rate))
-	}
-	if p.Video {
-		children = append(children, videoAcceptNode())
 	}
 	if p.RelayTe != nil {
 		children = append(children, waBinary.Node{Tag: "te", Attrs: waBinary.Attrs{"priority": "2"}, Content: p.RelayTe})
@@ -161,6 +158,9 @@ func BuildAccept(p *AcceptParams, log ...zerolog.Logger) waBinary.Node {
 	}
 	if p.VoipSettings != nil {
 		children = append(children, waBinary.Node{Tag: "voip_settings", Attrs: waBinary.Attrs{"uncompressed": "1"}, Content: p.VoipSettings})
+	}
+	if p.Video {
+		children = append(children, videoAcceptNode())
 	}
 	return callWrap(p.To, nil, offerAction("accept", p.CallID, p.CallCreator, children))
 }

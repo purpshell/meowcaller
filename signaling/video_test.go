@@ -48,16 +48,16 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	}
 }
 
-// TestFromStartVideoAcceptAdvertisesTheCalleeDecoder pins the captured answer shape:
-// unlike preaccept, the final accept carries the callee-side video decoder marker.
-func TestFromStartVideoAcceptAdvertisesTheCalleeDecoder(t *testing.T) {
+// TestFromStartVideoAcceptAdvertisesTheCalleeEncoder pins the WaCalls H.264 answer
+// shape: the video marker is appended after the established audio/relay handshake.
+func TestFromStartVideoAcceptAdvertisesTheCalleeEncoder(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
 		CallID: "CID", To: peer, CallCreator: creator,
 		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6),
 		Capability: CapabilityOffer, Video: true,
 	})
-	want := []string{"audio", "video", "te", "net", "encopt", "capability"}
+	want := []string{"audio", "te", "net", "encopt", "capability", "video"}
 	if got := childTags(t, accept); !eqTags(got, want) {
 		t.Errorf("accept tags = %v, want %v", got, want)
 	}
@@ -65,11 +65,14 @@ func TestFromStartVideoAcceptAdvertisesTheCalleeDecoder(t *testing.T) {
 	if !ok {
 		t.Fatal("from-start video accept omitted the callee video marker")
 	}
-	if dec, _ := attrString(video, "dec"); dec != "H264" {
-		t.Errorf("video accept dec = %q, want H264", dec)
+	if enc, _ := attrString(video, "enc"); enc != VideoCodecH264 {
+		t.Errorf("video accept enc = %q, want %s", enc, VideoCodecH264)
 	}
-	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
-		t.Errorf("video accept device_orientation = %q, want 0", orientation)
+	if _, has := video.Attrs["dec"]; has {
+		t.Error("video accept must not carry the decoder-state attribute")
+	}
+	if _, has := video.Attrs["device_orientation"]; has {
+		t.Error("video accept must not carry a standalone-state orientation")
 	}
 }
 

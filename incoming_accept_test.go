@@ -148,7 +148,7 @@ func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing
 	}
 }
 
-func TestIncomingVideoNegotiatesCalleeVideoInFinalAcceptExactlyOnce(t *testing.T) {
+func TestIncomingVideoAdvertisesCalleeEncoderInFinalAcceptExactlyOnce(t *testing.T) {
 	h := newAcceptHarness(true, true)
 	h.eng.onCallRaw(h.muteNode())
 	if err := h.call.Answer(); err != nil {
@@ -175,11 +175,14 @@ func TestIncomingVideoNegotiatesCalleeVideoInFinalAcceptExactlyOnce(t *testing.T
 	if video == nil {
 		t.Fatal("final accept omitted the callee video marker")
 	}
-	if got := video.AttrGetter().String("dec"); got != signaling.VideoStateDecH264 {
-		t.Fatalf("final accept video dec = %q, want H264", got)
+	if got := video.AttrGetter().String("enc"); got != signaling.VideoCodecH264 {
+		t.Fatalf("final accept video enc = %q, want %s", got, signaling.VideoCodecH264)
 	}
-	if got := video.AttrGetter().String("device_orientation"); got != "0" {
-		t.Fatalf("final accept video device_orientation = %q, want 0", got)
+	if got := video.AttrGetter().String("dec"); got != "" {
+		t.Fatalf("final accept video dec = %q, want absent", got)
+	}
+	if got := video.AttrGetter().String("device_orientation"); got != "" {
+		t.Fatalf("final accept video device_orientation = %q, want absent", got)
 	}
 }
 
@@ -404,7 +407,7 @@ func TestIncomingAcceptEndDuringSendCancelsIOAndDoesNotCommit(t *testing.T) {
 	}
 }
 
-func TestIncomingVoiceAcceptStaysAudioOnlyAndVideoAcceptAdvertisesDecoder(t *testing.T) {
+func TestIncomingVoiceAcceptStaysAudioOnlyAndVideoAcceptAdvertisesEncoder(t *testing.T) {
 	for _, video := range []bool{false, true} {
 		t.Run(map[bool]string{false: "voice", true: "video"}[video], func(t *testing.T) {
 			h := newAcceptHarness(video, true)
