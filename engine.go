@@ -64,7 +64,8 @@ type engineCall struct {
 	started     bool
 	cancel      context.CancelFunc // tears down this call's media goroutine
 
-	accept incomingAccept
+	accept         incomingAccept
+	acceptMetadata waBinary.Attrs
 }
 
 // newEngine creates the engine for a Client.
@@ -487,6 +488,8 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	m.creator = ev.CallCreator
 	m.from = ev.From
 	m.direction = CallDirectionIncoming
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L135-L155
+	m.acceptMetadata = captureIncomingAcceptMetadata(ev.Data)
 	// A <video> child marks a call that starts with both video directions enabled.
 	isVideo := signaling.OfferHasVideo(ev.Data)
 	m.localVideo = isVideo

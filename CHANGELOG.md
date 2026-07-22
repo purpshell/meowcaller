@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — echo incoming offer metadata in final accept — `implemented`
+- Incoming offers now retain only `peer_abtest_bucket` and
+  `peer_abtest_bucket_id_list`, and the final accept echoes exactly the fields that
+  were present instead of sending a fixed bucket list from an unrelated capture.
+- Unknown or non-string offer attributes are not forwarded, and offers without
+  supported metadata omit the `<metadata>` child entirely.
+- Deterministic tests cover extraction, filtering, exact echo, omission, relay and
+  capability retention, wrapper id presence, and the captured video accept shape.
+
 ### signaling — mirror the captured incoming video handshake — `implemented`
 - Incoming video `preaccept` now advertises the captured H.264 decoder, zero-sized
   preaccept geometry, and the `e0 bb 13` callee capability. Voice preaccept remains

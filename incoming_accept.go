@@ -68,6 +68,31 @@ type incomingAccept struct {
 	sendCount       uint32
 }
 
+func captureIncomingAcceptMetadata(offer *waBinary.Node) waBinary.Attrs {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L135-L155
+	// NOT VALIDATED: remove after a live inbound call receives peer RTP with echoed metadata.
+	if offer == nil {
+		return nil
+	}
+	for i := range offer.GetChildren() {
+		child := &offer.GetChildren()[i]
+		if child.Tag != "metadata" {
+			continue
+		}
+		metadata := make(waBinary.Attrs, 2)
+		for _, key := range []string{"peer_abtest_bucket", "peer_abtest_bucket_id_list"} {
+			if value, ok := child.Attrs[key].(string); ok {
+				metadata[key] = value
+			}
+		}
+		if len(metadata) == 0 {
+			return nil
+		}
+		return metadata
+	}
+	return nil
+}
+
 func (e *engine) notifyIncomingAccept(call *Call, state string, trigger AcceptTrigger, err error) {
 	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/flow-incoming-1to1.yaml#L82-L115
 	if call != nil {
@@ -128,6 +153,7 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	m.accept.sendCancel = cancel
 	call, to, creator := m.call, m.from, m.creator
 	isVideo := m.localVideo || m.remoteVideo
+	metadata := m.acceptMetadata
 	var relayTE []byte
 	if endpoint := getMediaRelayEndpoint(m.relay); endpoint != nil {
 		relayTE = append([]byte(nil), endpoint.wireAddress...)
@@ -135,15 +161,16 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	e.mu.Unlock()
 
 	e.notifyIncomingAccept(call, "incoming_accept_send_started", trigger, nil)
+	wrapperID := e.nextCallNodeID()
 	accept := signaling.BuildAccept(&signaling.AcceptParams{
-		CallID: callID, To: to, CallCreator: creator,
+		CallID: callID, To: to, WrapperID: wrapperID, CallCreator: creator,
 		AudioRates: []string{"16000"},
 		RelayTe:    relayTE,
 		Capability: signaling.CapabilityOffer,
-		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
-		Video:      isVideo,
+		// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L530-L569
+		Metadata: metadata,
+		Video:    isVideo,
 	})
-	accept.Attrs["id"] = e.nextCallNodeID()
 	err := e.transmitCallNode(ctx, accept)
 	cancel()
 

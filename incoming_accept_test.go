@@ -3,6 +3,7 @@ package meowcaller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -146,9 +147,12 @@ func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing
 	if capability == nil {
 		t.Fatal("final accept omitted the negotiated capability")
 	}
+	if id := accept.AttrGetter().String("id"); id == "" {
+		t.Fatal("final accept omitted the wrapper id")
+	}
 }
 
-func TestIncomingVideoAdvertisesCalleeEncoderInFinalAcceptExactlyOnce(t *testing.T) {
+func TestIncomingVideoUsesCapturedCalleeShapeInFinalAcceptExactlyOnce(t *testing.T) {
 	h := newAcceptHarness(true, true)
 	h.eng.onCallRaw(h.muteNode())
 	if err := h.call.Answer(); err != nil {
@@ -175,14 +179,108 @@ func TestIncomingVideoAdvertisesCalleeEncoderInFinalAcceptExactlyOnce(t *testing
 	if video == nil {
 		t.Fatal("final accept omitted the callee video marker")
 	}
-	if got := video.AttrGetter().String("enc"); got != signaling.VideoCodecH264 {
-		t.Fatalf("final accept video enc = %q, want %s", got, signaling.VideoCodecH264)
+	if got := video.AttrGetter().String("dec"); got != signaling.VideoStateDecH264 {
+		t.Fatalf("final accept video dec = %q, want %s", got, signaling.VideoStateDecH264)
 	}
-	if got := video.AttrGetter().String("dec"); got != "" {
-		t.Fatalf("final accept video dec = %q, want absent", got)
+	if got := video.AttrGetter().String("device_orientation"); got != "0" {
+		t.Fatalf("final accept video device_orientation = %q, want 0", got)
 	}
-	if got := video.AttrGetter().String("device_orientation"); got != "" {
-		t.Fatalf("final accept video device_orientation = %q, want absent", got)
+	if got := video.AttrGetter().String("enc"); got != "" {
+		t.Fatalf("final accept video enc = %q, want absent", got)
+	}
+}
+
+func TestCaptureIncomingAcceptMetadata(t *testing.T) {
+	tests := []struct {
+		name  string
+		offer *waBinary.Node
+		want  waBinary.Attrs
+	}{
+		{
+			name: "both supported fields",
+			offer: &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{
+				Tag: "metadata", Attrs: waBinary.Attrs{
+					"peer_abtest_bucket":         "bucket-a",
+					"peer_abtest_bucket_id_list": "11,22",
+					"unknown":                    "must-not-echo",
+				},
+			}}},
+			want: waBinary.Attrs{
+				"peer_abtest_bucket":         "bucket-a",
+				"peer_abtest_bucket_id_list": "11,22",
+			},
+		},
+		{
+			name: "one supported field",
+			offer: &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{
+				Tag: "metadata", Attrs: waBinary.Attrs{"peer_abtest_bucket": ""},
+			}}},
+			want: waBinary.Attrs{"peer_abtest_bucket": ""},
+		},
+		{
+			name: "non-string and unknown fields",
+			offer: &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{
+				Tag: "metadata", Attrs: waBinary.Attrs{"peer_abtest_bucket": 42, "unknown": "value"},
+			}}},
+		},
+		{name: "no metadata", offer: &waBinary.Node{Tag: "offer"}},
+		{name: "nil offer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := captureIncomingAcceptMetadata(tt.offer); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("metadata = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIncomingFinalAcceptEchoesOnlyOfferMetadata(t *testing.T) {
+	h := newAcceptHarness(true, true)
+	offer := &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{
+		Tag: "metadata", Attrs: waBinary.Attrs{
+			"peer_abtest_bucket":         "bucket-live",
+			"peer_abtest_bucket_id_list": "7,9",
+			"unknown":                    "must-not-echo",
+		},
+	}}}
+	h.eng.calls[h.call.id].acceptMetadata = captureIncomingAcceptMetadata(offer)
+	h.eng.onCallRaw(h.muteNode())
+	if err := h.call.Answer(); err != nil {
+		t.Fatal(err)
+	}
+	accept := h.firstAccept(t)
+	action := accept.GetChildren()[0]
+	var metadata *waBinary.Node
+	for i := range action.GetChildren() {
+		child := &action.GetChildren()[i]
+		if child.Tag == "metadata" {
+			metadata = child
+		}
+	}
+	if metadata == nil {
+		t.Fatal("final accept omitted offer metadata")
+	}
+	want := waBinary.Attrs{
+		"peer_abtest_bucket":         "bucket-live",
+		"peer_abtest_bucket_id_list": "7,9",
+	}
+	if !reflect.DeepEqual(metadata.Attrs, want) {
+		t.Fatalf("final accept metadata = %#v, want %#v", metadata.Attrs, want)
+	}
+}
+
+func TestIncomingFinalAcceptOmitsMetadataWhenOfferHasNone(t *testing.T) {
+	h := newAcceptHarness(true, true)
+	h.eng.onCallRaw(h.muteNode())
+	if err := h.call.Answer(); err != nil {
+		t.Fatal(err)
+	}
+	accept := h.firstAccept(t)
+	for _, child := range accept.GetChildren()[0].GetChildren() {
+		if child.Tag == "metadata" {
+			t.Fatal("final accept unexpectedly contains metadata")
+		}
 	}
 }
 
