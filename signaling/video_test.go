@@ -48,51 +48,36 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 	}
 }
 
-// TestAcceptAdvertisesVideo checks the accept carries a <video> child when requested.
-func TestAcceptAdvertisesVideo(t *testing.T) {
+// TestFromStartVideoAcceptUsesTheEstablishedHandshake pins the observed answer shape:
+// the offer marks the call as video, while preaccept/accept keep the same media-selection
+// children as audio. Video state is announced separately after acceptance.
+func TestFromStartVideoAcceptUsesTheEstablishedHandshake(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
 		CallID: "CID", To: peer, CallCreator: creator,
-		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6), Video: true,
+		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6),
+		Capability: CapabilityOffer, Video: true,
 	})
-	want := []string{"audio", "video", "te", "net", "encopt"}
+	want := []string{"audio", "te", "net", "encopt", "capability"}
 	if got := childTags(t, accept); !eqTags(got, want) {
 		t.Errorf("accept tags = %v, want %v", got, want)
 	}
-	video, ok := getChild(t, contentNodes(t, accept)[0], "video")
-	if !ok {
-		t.Fatal("video accept child missing")
-	}
-	if dec, _ := attrString(video, "dec"); dec != "H264" {
-		t.Errorf("video accept dec = %q, want H264", dec)
-	}
-	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
-		t.Errorf("video accept device_orientation = %q, want 0", orientation)
+	if _, ok := getChild(t, contentNodes(t, accept)[0], "video"); ok {
+		t.Fatal("from-start video accept must not carry an experimental video child")
 	}
 }
 
-func TestVideoPreacceptAdvertisesDecoder(t *testing.T) {
+func TestVideoPreacceptUsesPreacceptCapability(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	pre := BuildPreaccept("CID", peer, creator, "wrap", []string{"16000"}, true)
 
-	want := []string{"audio", "video", "encopt", "capability"}
+	want := []string{"audio", "encopt", "capability"}
 	if got := childTags(t, pre); !eqTags(got, want) {
 		t.Errorf("video preaccept tags = %v, want %v", got, want)
 	}
 	action := contentNodes(t, pre)[0]
-	video, ok := getChild(t, action, "video")
-	if !ok {
-		t.Fatal("video preaccept child missing")
-	}
-	for attr, want := range map[string]string{
-		"dec":                "H264",
-		"device_orientation": "0",
-		"screen_width":       "0",
-		"screen_height":      "0",
-	} {
-		if got, _ := attrString(video, attr); got != want {
-			t.Errorf("video preaccept %s = %q, want %q", attr, got, want)
-		}
+	if _, ok := getChild(t, action, "video"); ok {
+		t.Fatal("video preaccept must not carry an experimental video child")
 	}
 	capability, ok := getChild(t, action, "capability")
 	if !ok {
@@ -102,7 +87,7 @@ func TestVideoPreacceptAdvertisesDecoder(t *testing.T) {
 	if !ok {
 		t.Fatalf("video preaccept capability content = %T, want []byte", capability.Content)
 	}
-	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
+	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe4, 0xbb, 0x07}
 	if !bytes.Equal(gotCapability, wantCapability) {
 		t.Errorf("video preaccept capability = %x, want %x", gotCapability, wantCapability)
 	}

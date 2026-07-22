@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### signaling — restore the established from-start video answer shape — `KAT-verified`
+- Incoming video now uses the same audio-shaped `preaccept`/`accept` negotiation as an
+  incoming voice call. Removed the unvalidated `<video>` children that had been added to
+  those answer stanzas; the original offer remains the from-start video marker.
+- Restored the documented capability bytes (`e4 bb 07` for preaccept and `e4 bb 13` for
+  accept). The distinct observed video-offer capability (`e0 fa 13`) is unchanged.
+- A real incoming call had accepted signaling and local RTP but no peer RTP while using
+  the experimental answer shape. Tests now pin the established child order and blobs.
+
 ### meowcaller — complete the incoming final-accept relay selection — `KAT-verified`
 - The incoming final `<accept>` now echoes the six-byte address of the relay endpoint
   selected for media and includes the negotiated capability blob. Previously the engine

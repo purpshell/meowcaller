@@ -368,7 +368,7 @@ func TestIncomingAcceptEndDuringSendCancelsIOAndDoesNotCommit(t *testing.T) {
 	}
 }
 
-func TestIncomingAcceptVoiceAndVideoStanzas(t *testing.T) {
+func TestIncomingVoiceAndVideoUseTheSameFinalAcceptHandshake(t *testing.T) {
 	for _, video := range []bool{false, true} {
 		t.Run(map[bool]string{false: "voice", true: "video"}[video], func(t *testing.T) {
 			h := newAcceptHarness(video, true)
@@ -384,8 +384,8 @@ func TestIncomingAcceptVoiceAndVideoStanzas(t *testing.T) {
 					hasVideo = true
 				}
 			}
-			if hasVideo != video {
-				t.Fatalf("video child = %v, want %v", hasVideo, video)
+			if hasVideo {
+				t.Fatal("final accept included an experimental video child")
 			}
 		})
 	}
