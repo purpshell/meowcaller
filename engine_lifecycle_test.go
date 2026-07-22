@@ -56,6 +56,9 @@ func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
 	if len(sent) != 1 || sent[0].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateUpgradeRequestV2 {
 		t.Fatalf("StartVideo sent %#v, want one state=11 stanza", sent)
 	}
+	if orientation, ok := sent[0].GetChildren()[0].Attrs["device_orientation"]; !ok || orientation != "0" {
+		t.Fatalf("StartVideo orientation = %v, want explicit 0", orientation)
+	}
 	if active, gated := senderVideoState(m.videoTx); !active || !gated {
 		t.Fatalf("upgrade sender state = active:%v gated:%v, want true,true", active, gated)
 	}
@@ -63,6 +66,9 @@ func TestCallVideoUpgradeGatesUntilPeerAcceptAndCanStop(t *testing.T) {
 	eng.onVideoStanza(videoStateNode(signaling.VideoStateUpgradeAccept))
 	if len(sent) != 2 || sent[1].GetChildren()[0].AttrGetter().Int("state") != signaling.VideoStateEnabled {
 		t.Fatalf("peer acceptance sent %#v, want state=1 announcement after state=4", sent)
+	}
+	if orientation, ok := sent[1].GetChildren()[0].Attrs["device_orientation"]; !ok || orientation != "0" {
+		t.Fatalf("enabled announcement orientation = %v, want explicit 0", orientation)
 	}
 	if active, gated := senderVideoState(m.videoTx); !active || gated {
 		t.Fatalf("accepted sender state = active:%v gated:%v, want true,false", active, gated)

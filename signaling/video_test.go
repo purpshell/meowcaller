@@ -137,11 +137,12 @@ func TestVideoStateUsesNegotiatedDecoderList(t *testing.T) {
 	}
 }
 
-func TestVideoUpgradeRequestMatchesWhatsAppRustShape(t *testing.T) {
+func TestVideoUpgradeRequestMatchesWhatsAppWebShape(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
+	orientation := 0
 	call := BuildVideoStateWithParams(VideoStateParams{
 		CallID: "CID", To: peer, CallCreator: creator, WrapperID: "wrap",
-		State: VideoStateUpgradeRequestV2, Dec: VideoDecRequest,
+		State: VideoStateUpgradeRequestV2, Dec: VideoDecRequest, DeviceOrientation: &orientation,
 	})
 	video, ok := getChild(t, call, "video")
 	if !ok {
@@ -156,8 +157,8 @@ func TestVideoUpgradeRequestMatchesWhatsAppRustShape(t *testing.T) {
 	if settings, _ := attrString(video, "voip_settings"); settings != "video" {
 		t.Fatalf("voip_settings = %q, want video", settings)
 	}
-	if _, ok := video.Attrs["device_orientation"]; ok {
-		t.Fatal("upgrade request unexpectedly includes device_orientation")
+	if orientation, _ := attrString(video, "device_orientation"); orientation != "0" {
+		t.Fatalf("device_orientation = %q, want 0", orientation)
 	}
 }
 

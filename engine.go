@@ -250,7 +250,8 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	var err error
 	switch transition {
 	case signaling.VideoStateUpgradeRequestV2:
-		err = send(transition, signaling.VideoDecRequest, nil)
+		orientation := 0
+		err = send(transition, signaling.VideoDecRequest, &orientation)
 	case signaling.VideoStateUpgradeAccept:
 		if err = send(transition, signaling.VideoDecAccept, nil); err == nil {
 			err = send(signaling.VideoStateEnabled, "", nil)
@@ -928,9 +929,10 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	}
 	e.mu.Unlock()
 	if announceEnabled {
+		orientation := 0
 		node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
 			CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
-			State: signaling.VideoStateEnabled,
+			State: signaling.VideoStateEnabled, DeviceOrientation: &orientation,
 		})
 		if err := e.transmitCallNode(context.Background(), node); err != nil {
 			e.mu.Lock()
