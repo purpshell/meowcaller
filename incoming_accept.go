@@ -154,19 +154,26 @@ func (e *engine) trySendFinalAccept(callID string, trigger AcceptTrigger) error 
 	call, to, creator := m.call, m.from, m.creator
 	isVideo := m.localVideo || m.remoteVideo
 	metadata := m.acceptMetadata
-	var relayTE []byte
-	if endpoint := getMediaRelayEndpoint(m.relay); endpoint != nil {
-		relayTE = append([]byte(nil), endpoint.wireAddress...)
-	}
 	e.mu.Unlock()
 
 	e.notifyIncomingAccept(call, "incoming_accept_send_started", trigger, nil)
 	wrapperID := e.nextCallNodeID()
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/examples/voip-cli/src/main.rs#L1182-L1197
+	// A from-start video accept carries neither the caller's relay <te> nor a
+	// <capability>. Sending those optional children after allocation was observed to
+	// make the caller stop the RTP stream already flowing through the elected relay.
+	// Voice accepts keep their negotiated capability. Relay readiness remains a send
+	// prerequisite.
+	// NOT VALIDATED: remove after a live incoming video call keeps receiving peer RTP
+	// after the final accept.
+	var capability []byte
+	if !isVideo {
+		capability = signaling.CapabilityOffer
+	}
 	accept := signaling.BuildAccept(&signaling.AcceptParams{
 		CallID: callID, To: to, WrapperID: wrapperID, CallCreator: creator,
 		AudioRates: []string{"16000"},
-		RelayTe:    relayTE,
-		Capability: signaling.CapabilityOffer,
+		Capability: capability,
 		// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L530-L569
 		Metadata: metadata,
 		Video:    isVideo,

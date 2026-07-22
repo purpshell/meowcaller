@@ -119,7 +119,8 @@ func newAcceptHarness(video, relayReady bool) *acceptHarness {
 	return h
 }
 
-func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing.T) {
+func TestIncomingVideoFinalAcceptPreservesElectedRelayByOmittingTeAndCapability(t *testing.T) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/examples/voip-cli/src/main.rs#L1182-L1197
 	h := newAcceptHarness(true, true)
 	h.eng.onCallRaw(h.muteNode())
 	if err := h.call.Answer(); err != nil {
@@ -138,17 +139,42 @@ func TestIncomingFinalAcceptCarriesSelectedRelayEndpointAndCapability(t *testing
 			capability = child
 		}
 	}
-	if relayTE == nil {
-		t.Fatal("final accept omitted the selected relay endpoint")
+	if relayTE != nil {
+		t.Fatal("video final accept unexpectedly echoed the caller's relay endpoint")
 	}
-	if got := nodeBytes(relayTE); string(got) != string([]byte{57, 144, 233, 57, 0x0d, 0x96}) {
-		t.Fatalf("final accept relay endpoint = %x, want selected relay endpoint", got)
-	}
-	if capability == nil {
-		t.Fatal("final accept omitted the negotiated capability")
+	if capability != nil {
+		t.Fatal("video final accept unexpectedly advertised a capability")
 	}
 	if id := accept.AttrGetter().String("id"); id == "" {
 		t.Fatal("final accept omitted the wrapper id")
+	}
+}
+
+func TestIncomingVoiceFinalAcceptKeepsCapabilityWithoutEchoingRelayEndpoint(t *testing.T) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/examples/voip-cli/src/main.rs#L1182-L1197
+	h := newAcceptHarness(false, true)
+	h.eng.onCallRaw(h.muteNode())
+	if err := h.call.Answer(); err != nil {
+		t.Fatal(err)
+	}
+
+	accept := h.firstAccept(t)
+	action := accept.GetChildren()[0]
+	var capability *waBinary.Node
+	for i := range action.GetChildren() {
+		child := &action.GetChildren()[i]
+		if child.Tag == "te" {
+			t.Fatal("voice final accept unexpectedly echoed the caller's relay endpoint")
+		}
+		if child.Tag == "capability" {
+			capability = child
+		}
+	}
+	if capability == nil {
+		t.Fatal("voice final accept omitted the negotiated capability")
+	}
+	if got := nodeBytes(capability); !reflect.DeepEqual(got, signaling.CapabilityOffer) {
+		t.Fatalf("voice final accept capability = %x, want %x", got, signaling.CapabilityOffer)
 	}
 }
 

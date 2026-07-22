@@ -50,18 +50,18 @@ func TestOfferAdvertisesVideo(t *testing.T) {
 
 // TestFromStartVideoAcceptMatchesCapturedCalleeShape pins the complete captured answer.
 func TestFromStartVideoAcceptMatchesCapturedCalleeShape(t *testing.T) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L2119-L2134
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
 		CallID: "CID", To: peer, WrapperID: "accept-wrap", CallCreator: creator,
-		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6),
-		Capability: CapabilityOffer,
+		AudioRates: []string{"16000"},
 		Metadata: waBinary.Attrs{
 			"peer_abtest_bucket":         "bucket-a",
 			"peer_abtest_bucket_id_list": "11,22",
 		},
 		Video: true,
 	})
-	want := []string{"audio", "video", "te", "net", "encopt", "metadata", "capability"}
+	want := []string{"audio", "video", "net", "encopt", "metadata"}
 	if got := childTags(t, accept); !eqTags(got, want) {
 		t.Errorf("accept tags = %v, want %v", got, want)
 	}
@@ -92,13 +92,11 @@ func TestFromStartVideoAcceptMatchesCapturedCalleeShape(t *testing.T) {
 	if got, _ := attrString(metadata, "peer_abtest_bucket_id_list"); got != "11,22" {
 		t.Errorf("peer_abtest_bucket_id_list = %q, want 11,22", got)
 	}
-	capability, ok := getChild(t, action, "capability")
-	if !ok {
-		t.Fatal("video accept capability missing")
+	if _, ok := getChild(t, action, "te"); ok {
+		t.Fatal("from-start video accept unexpectedly echoed a relay endpoint")
 	}
-	wantCapability := []byte{0x01, 0x05, 0xf7, 0x09, 0xe0, 0xbb, 0x13}
-	if got, ok := capability.Content.([]byte); !ok || !bytes.Equal(got, wantCapability) {
-		t.Errorf("video accept capability = %x, want %x", got, wantCapability)
+	if _, ok := getChild(t, action, "capability"); ok {
+		t.Fatal("from-start video accept unexpectedly advertised a capability")
 	}
 }
 

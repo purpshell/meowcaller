@@ -7,6 +7,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — preserve the elected relay on incoming final accept — `implemented`
+- Incoming from-start video accepts now omit both `<te>` and `<capability>`, matching
+  the captured reference call site. Relay readiness still gates the send, but the
+  caller's endpoint is no longer echoed back after allocation.
+- A live diagnostic isolated the fault: peer audio and video RTP reached the callee
+  before the final accept, then stopped immediately when the accept carrying those
+  two extra children was sent. Voice accepts keep their negotiated capability.
+- Deterministic tests pin the direction-specific shape and ensure the required wrapper
+  id and offer metadata remain intact. Live post-fix validation is still required.
+
 ### meowcaller — echo incoming offer metadata in final accept — `implemented`
 - Incoming offers now retain only `peer_abtest_bucket` and
   `peer_abtest_bucket_id_list`, and the final accept echoes exactly the fields that
