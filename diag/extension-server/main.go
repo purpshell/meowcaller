@@ -88,7 +88,7 @@ func main() {
 	output := flag.String("output", "", "JSONL output file")
 	flag.Parse()
 	if *output == "" {
-		*output = filepath.Join("diagnostics", "captures", "whatsapp-"+time.Now().Format("20060102-150405")+".jsonl")
+		*output = filepath.Join("diag", "captures", "whatsapp-"+time.Now().Format("20060102-150405")+".jsonl")
 	}
 	if err := os.MkdirAll(filepath.Dir(*output), 0o755); err != nil {
 		log.Fatal(err)
