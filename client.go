@@ -10,8 +10,8 @@ import (
 )
 
 // Client is the managed entry point to the WhatsApp 1:1 calling stack. It wraps a
-// connected *whatsmeow.Client and drives the whole call lifecycle — signaling, keying,
-// relay election, and media — under the hood, behind a small surface:
+// connected *whatsmeow.Client, consumes its call-control events, and drives the media
+// lifecycle behind a small surface:
 // place a call with Call, handle inbound calls from an OnIncomingCall listener, and
 // attach a Player (outbound audio) and a sink (inbound audio) to each Call.
 //
@@ -33,9 +33,8 @@ type CallOptions struct {
 	Video bool
 }
 
-// NewClient wraps a connected whatsmeow client and installs the call event handlers.
-// Construct it before the whatsmeow client connects so the low-level <ack>/<call>
-// interception is in place before the receive loop starts.
+// NewClient wraps a whatsmeow client and installs the call event handlers. Construct it
+// before the whatsmeow client connects so no incoming call event is missed.
 func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
 	c := &Client{wa: wa, log: cfg.log, diag: cfg.diag}

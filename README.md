@@ -14,6 +14,8 @@ You can find the underlying spec in the [WhatsApp Calls Research Group](https://
 The [godoc](https://pkg.go.dev/github.com/purpshell/meowcaller) includes docs for all methods.
 
 There's a range of examples in the [examples](/examples/) directory.
+The standalone [browser call console](/examples/web/) provides QR pairing, audio/video
+calling, independent camera controls, orientation, and reactions without a frontend build step.
 
 The API is easy to approach and implement: attach a **`Source`** to send media, a **`Sink`** to receive it, and register callbacks for call events.
 
@@ -52,6 +54,10 @@ Core VoIP features are present:
 - Mid-call audio-to-video upgrade, acceptance, rejection, cancellation, and downgrade
 - Camera orientation and authenticated video keyframe feedback
 - Send and receive call emoji reactions over the dedicated RTC app-data stream
+
+WhatsApp call signaling, call-key exchange, and relay election are provided by
+[whatsmeow](https://github.com/tulir/whatsmeow). Meowcaller owns the RTP/SRTP media
+plane, codecs, pacing, video framing, reactions, and diagnostics.
 
 Things that are not yet implemented:
 
