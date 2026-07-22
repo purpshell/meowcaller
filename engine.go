@@ -51,16 +51,17 @@ type engineCall struct {
 	creator types.JID // call-creator JID (for accept/relaylatency)
 	from    types.JID // the <call> "from" — where stanzas are addressed
 
-	direction   CallDirection
-	codec       AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
-	localVideo  bool         // this client is sending, or has requested to send, video
-	remoteVideo bool         // the peer is sending video to this client
-	videoGate   bool         // outbound upgrade is waiting for peer acceptance
-	videoTx     *videoSender // video send pipeline, live while media runs
-	appDataTx   *appDataSender
-	rekeyPeer   func(string) error
-	started     bool
-	cancel      context.CancelFunc // tears down this call's media goroutine
+	direction        CallDirection
+	codec            AudioCodec   // audio codec for this call, selected from voip_settings (MLow default)
+	localVideo       bool         // this client is sending, or has requested to send, video
+	remoteVideo      bool         // the peer is sending video to this client
+	videoGate        bool         // outbound upgrade is waiting for peer acceptance
+	peerVideoUpgrade bool         // the peer's inbound upgrade is waiting for local acceptance
+	videoTx          *videoSender // video send pipeline, live while media runs
+	appDataTx        *appDataSender
+	rekeyPeer        func(string) error
+	started          bool
+	cancel           context.CancelFunc // tears down this call's media goroutine
 
 	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
 	acceptPending bool
@@ -214,13 +215,17 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 		return errors.New("meowcaller: call is not active")
 	}
 	to, creator, sender := m.from, m.creator, m.videoTx
+	localVideoActive := m.localVideo
 	switch transition {
 	case signaling.VideoStateUpgradeRequestV2:
 		m.localVideo = true
 		m.videoGate = true
 	case signaling.VideoStateUpgradeAccept:
-		m.localVideo = true
-		m.videoGate = false
+		if !m.peerVideoUpgrade {
+			e.mu.Unlock()
+			return errors.New("meowcaller: no pending peer video upgrade")
+		}
+		m.peerVideoUpgrade = false
 	case signaling.VideoStateStopped:
 		m.localVideo = false
 		m.videoGate = false
@@ -232,8 +237,8 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	if sender != nil {
 		if transition == signaling.VideoStateStopped {
 			sender.disable()
-		} else {
-			sender.enable(transition == signaling.VideoStateUpgradeRequestV2)
+		} else if transition == signaling.VideoStateUpgradeRequestV2 {
+			sender.enable(true)
 		}
 	}
 
@@ -253,8 +258,12 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 		orientation := 0
 		err = send(transition, signaling.VideoDecRequest, &orientation)
 	case signaling.VideoStateUpgradeAccept:
-		if err = send(transition, signaling.VideoDecAccept, nil); err == nil {
-			err = send(signaling.VideoStateEnabled, "", nil)
+		if !localVideoActive {
+			orientation := 0
+			err = send(signaling.VideoStateStopped, "", &orientation)
+		}
+		if err == nil {
+			err = send(transition, signaling.VideoDecAccept, nil)
 		}
 	case signaling.VideoStateStopped:
 		orientation := 0
@@ -267,9 +276,13 @@ func (e *engine) transitionVideo(callID string, transition int) error {
 	e.mu.Lock()
 	var currentSender *videoSender
 	if current := e.calls[callID]; current == m {
-		current.localVideo = false
-		current.videoGate = false
-		currentSender = current.videoTx
+		if transition == signaling.VideoStateUpgradeAccept {
+			current.peerVideoUpgrade = true
+		} else {
+			current.localVideo = false
+			current.videoGate = false
+			currentSender = current.videoTx
+		}
 	}
 	e.mu.Unlock()
 	if currentSender != nil {
@@ -909,6 +922,8 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 	enableSender := false
 	announceEnabled := false
 	switch state {
+	case signaling.VideoStateUpgradeRequest, signaling.VideoStateUpgradeRequestV2:
+		m.peerVideoUpgrade = true
 	case signaling.VideoStateEnabled:
 		m.remoteVideo = true
 		if m.localVideo && m.videoGate {
@@ -923,9 +938,12 @@ func (e *engine) onVideoStanza(v *waBinary.Node) {
 		m.videoGate = false
 		announceEnabled = true
 	case signaling.VideoStateUpgradeReject, signaling.VideoStateUpgradeCancel:
-		m.localVideo = false
-		m.videoGate = false
-		disableSender = true
+		m.peerVideoUpgrade = false
+		if m.videoGate {
+			m.localVideo = false
+			m.videoGate = false
+			disableSender = true
+		}
 	}
 	e.mu.Unlock()
 	if announceEnabled {

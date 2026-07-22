@@ -125,10 +125,11 @@ func TestSetVideoEnabledOnlyTogglesLocalFlow(t *testing.T) {
 	}
 }
 
-func TestCallAcceptVideoSendsAcceptThenEnabled(t *testing.T) {
+func TestCallAcceptVideoPreservesDisabledLocalFlow(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	m := eng.calls[call.ID()]
 	m.localVideo = false
+	m.peerVideoUpgrade = true
 	m.videoTx = &videoSender{}
 	var states []int
 	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
@@ -139,8 +140,33 @@ func TestCallAcceptVideoSendsAcceptThenEnabled(t *testing.T) {
 	if err := call.AcceptVideo(); err != nil {
 		t.Fatalf("AcceptVideo: %v", err)
 	}
-	if len(states) != 2 || states[0] != signaling.VideoStateUpgradeAccept || states[1] != signaling.VideoStateEnabled {
-		t.Fatalf("AcceptVideo states = %v, want [4 1]", states)
+	if len(states) != 2 || states[0] != signaling.VideoStateStopped || states[1] != signaling.VideoStateUpgradeAccept {
+		t.Fatalf("AcceptVideo states = %v, want [6 4]", states)
+	}
+	if active, gated := senderVideoState(m.videoTx); active || gated {
+		t.Fatalf("accepted sender state = active:%v gated:%v, want false,false", active, gated)
+	}
+	if call.IsSendingVideo() {
+		t.Fatal("accepting peer video enabled the local sender")
+	}
+}
+
+func TestCallAcceptVideoPreservesEnabledLocalFlow(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.peerVideoUpgrade = true
+	m.videoTx = &videoSender{active: true}
+	var states []int
+	eng.sendCallNode = func(_ context.Context, node waBinary.Node) error {
+		states = append(states, node.GetChildren()[0].AttrGetter().Int("state"))
+		return nil
+	}
+
+	if err := call.AcceptVideo(); err != nil {
+		t.Fatalf("AcceptVideo: %v", err)
+	}
+	if len(states) != 1 || states[0] != signaling.VideoStateUpgradeAccept {
+		t.Fatalf("AcceptVideo states = %v, want [4]", states)
 	}
 	if active, gated := senderVideoState(m.videoTx); !active || gated {
 		t.Fatalf("accepted sender state = active:%v gated:%v, want true,false", active, gated)
@@ -233,6 +259,9 @@ func TestInboundVideoUpgradeWaitsForExplicitAcceptance(t *testing.T) {
 	}
 	if active, _ := senderVideoState(m.videoTx); active {
 		t.Fatal("inbound upgrade activated video before explicit acceptance")
+	}
+	if !m.peerVideoUpgrade {
+		t.Fatal("inbound upgrade was not marked pending")
 	}
 }
 

@@ -87,7 +87,8 @@ func (c *Call) StartVideo() error {
 	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeRequestV2)
 }
 
-// AcceptVideo accepts a peer's video upgrade with state 4 followed by state 1.
+// AcceptVideo accepts a pending peer video upgrade without changing this client's
+// independent outbound video state.
 func (c *Call) AcceptVideo() error {
 	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeAccept)
 }
