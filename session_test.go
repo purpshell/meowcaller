@@ -222,6 +222,54 @@ func TestMediaPipelineMultiCandidateAutoSelect(t *testing.T) {
 	}
 }
 
+func TestRecvKeySelectionSurvivesBadPacketAtSeq65535(t *testing.T) {
+	callKey := iota32()
+	self := "111111111111111:0@lid"
+	initialPeer := "222222222222222:0@lid"
+	answeringPeer := "222222222222222:7@lid"
+	const ssrc = 0x55667788
+
+	receiver, err := NewMediaPipeline(callKey, self, initialPeer, ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("receiver: %v", err)
+	}
+	answeringDevice, err := NewMediaPipeline(callKey, answeringPeer, self, ssrc, FrameSamples)
+	if err != nil {
+		t.Fatalf("answering device: %v", err)
+	}
+
+	wrongKeys, _ := srtp.DeriveE2eKeys(callKey, "nobody@lid")
+	badHdr := rtp.RtpHeader{
+		SequenceNumber: 0xFFFF, Ssrc: ssrc, PayloadType: 120, Timestamp: 0,
+	}
+	badBody := rtp.EncodeRtpHeader(&badHdr)
+	badBody = append(badBody, 0xFF, 0xFE)
+	badTag := srtp.ComputeWarpMITag(wrongKeys.AuthKey[:], badBody, 0, srtp.WarpMITagLen)
+	badPkt := append(badBody, badTag...)
+
+	receiver.UnprotectAudio(badPkt)
+	if receiver.recvLocked {
+		t.Fatal("bad-tag packet at seq=65535 locked a key; expected no match")
+	}
+
+	payload := []byte{1, 2, 3, 4, 5}
+	validPkt, err := answeringDevice.ProtectAudio(payload)
+	if err != nil {
+		t.Fatalf("answering device protect: %v", err)
+	}
+
+	_, got, ok := receiver.UnprotectAudio(validPkt)
+	if !ok {
+		t.Fatal("valid :7@lid packet rejected after bad-tag packet at seq=65535")
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload = %x, want %x", got, payload)
+	}
+	if !receiver.recvLocked {
+		t.Fatal("recv key not locked after matching valid packet")
+	}
+}
+
 func TestMediaPipelineTracksSenderStats(t *testing.T) {
 	pipe, err := NewMediaPipeline(iota32(), "111111111111111:0@lid", "222222222222222:0@lid", 0x12345678, 960)
 	if err != nil {
