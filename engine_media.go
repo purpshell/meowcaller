@@ -18,6 +18,7 @@ import (
 	"github.com/purpshell/meowcaller/srtp"
 	"github.com/purpshell/meowcaller/stun"
 	"github.com/rs/zerolog"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // The live-relay media loop: connect+allocate to the elected relay, then run the
@@ -38,8 +39,7 @@ func (e *engine) maybeStartMedia(callID string) {
 	mctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	call := m.call
-	callKey, selfLID, peerLID, rd := m.callKey, m.selfLID, m.peerLID, m.relay
-	inbound := m.direction == CallDirectionIncoming
+	callKey, selfLID, peerLID, endpoint := m.callKey, m.selfLID, m.peerLID, m.relay
 	e.mu.Unlock()
 
 	if call != nil {
@@ -47,7 +47,7 @@ func (e *engine) maybeStartMedia(callID string) {
 	}
 	e.c.log.Info().Str("call_id", callID).Msg("starting media")
 	go func() {
-		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, rd, inbound); err != nil {
+		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, endpoint); err != nil {
 			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("media ended")
 		}
 	}()
@@ -57,17 +57,16 @@ func (e *engine) maybeStartMedia(callID string) {
 // the channel and the allocate bytes (re-sent by the keepalive).
 //
 // NOT VALIDATED: live-relay only.
-func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSsrcs [9]uint32, inbound bool) (*relay.RelayMediaChannel, []byte, error) {
+func (e *engine) connectAndAllocate(ctx context.Context, ep *types.RelayEndpoint, streamSsrcs [9]uint32) (*relay.RelayMediaChannel, []byte, error) {
 	log := e.c.log
-	ep := getMediaRelayEndpoint(rd, inbound)
-	if ep == nil || len(ep.addresses) == 0 {
+	if ep == nil || ep.IPv4 == "" || ep.Port == 0 {
 		return nil, nil, fmt.Errorf("relay has no usable endpoint")
 	}
-	addr := &net.UDPAddr{IP: net.ParseIP(ep.addresses[0].ipv4), Port: int(ep.addresses[0].port)}
-	log.Info().Str("relay_name", ep.relayName).Str("addr", addr.String()).Msg("connecting media transport to relay")
+	addr := &net.UDPAddr{IP: net.ParseIP(ep.IPv4), Port: int(ep.Port)}
+	log.Info().Str("relay_name", ep.RelayName).Str("addr", addr.String()).Msg("connecting media transport to relay")
 	e.c.diag.Emit("relay", map[string]any{
-		"event": "endpoint", "relay_name": ep.relayName,
-		"ipv4": ep.addresses[0].ipv4, "port": ep.addresses[0].port, "token_id": ep.tokenID,
+		"event": "endpoint", "relay_name": ep.RelayName,
+		"ipv4": ep.IPv4, "port": ep.Port, "token_id": ep.TokenID, "is_fna": ep.IsFNA,
 	})
 
 	type result struct {
@@ -91,29 +90,29 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSs
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	}
-	log.Info().Str("relay_name", ep.relayName).Msg("relay DataChannel open")
+	log.Info().Str("relay_name", ep.RelayName).Msg("relay DataChannel open")
 
-	if int(ep.tokenID) >= len(rd.relayTokens) || rd.relayTokens[ep.tokenID] == nil {
+	if len(ep.Token) == 0 {
 		ch.Close()
-		return nil, nil, fmt.Errorf("no relay token #%d", ep.tokenID)
+		return nil, nil, fmt.Errorf("no relay token #%d", ep.TokenID)
 	}
-	if len(rd.relayKeyASCII) == 0 {
+	if len(ep.Key) == 0 {
 		ch.Close()
 		return nil, nil, fmt.Errorf("relay has no <key>")
 	}
 	e.c.diag.Emit("relay", map[string]any{
-		"event": "keying", "token_id": ep.tokenID, "token_count": len(rd.relayTokens),
-		"relay_key_hex": hex.EncodeToString(rd.relayKeyASCII),
-		"token_hex":     hex.EncodeToString(rd.relayTokens[ep.tokenID]),
+		"event": "keying", "token_id": ep.TokenID,
+		"relay_key_hex": hex.EncodeToString(ep.Key),
+		"token_hex":     hex.EncodeToString(ep.Token),
 	})
-	endpointXor, ok := stun.EncodeXorRelayEndpoint(ep.addresses[0].ipv4, ep.addresses[0].port, log)
+	endpointXor, ok := stun.EncodeXorRelayEndpoint(ep.IPv4, ep.Port, log)
 	if !ok {
 		ch.Close()
 		return nil, nil, fmt.Errorf("bad endpoint XOR")
 	}
 	var tx [12]byte
 	_, _ = rand.Read(tx[:])
-	allocate := stun.BuildWasmStunAllocateRequestWithStreamSsrcs(tx, rd.relayTokens[ep.tokenID], endpointXor, streamSsrcs, rd.relayKeyASCII, log)
+	allocate := stun.BuildWasmStunAllocateRequestWithStreamSsrcs(tx, ep.Token, endpointXor, streamSsrcs, ep.Key, log)
 	if _, err := ch.Send(allocate); err != nil {
 		ch.Close()
 		return nil, nil, fmt.Errorf("allocate send: %w", err)
@@ -135,7 +134,7 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSs
 // out with the allocate at t+0, BEFORE any RTP; no STUN binding-requests are ever sent.
 //
 // NOT VALIDATED: live-relay only.
-func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKey []byte, selfLID, peerLID string, rd *relayData, inbound bool) error {
+func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKey []byte, selfLID, peerLID string, ep *types.RelayEndpoint) error {
 	log := e.c.log
 	selfParticipantID := rtp.FormatE2ESrtpParticipantID(selfLID)
 	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, selfParticipantID, 0, log)
@@ -154,7 +153,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	if err != nil {
 		return err
 	}
-	ch, allocate, err := e.connectAndAllocate(ctx, rd, streamSsrcs, inbound)
+	ch, allocate, err := e.connectAndAllocate(ctx, ep, streamSsrcs)
 	if err != nil {
 		return err
 	}
@@ -549,7 +548,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
 					var tx [12]byte
 					copy(tx[:], txid)
-					resp := stun.EncodeStunRequest(stun.MsgBindingSuccess, tx, nil, rd.relayKeyASCII, true, log)
+					resp := stun.EncodeStunRequest(stun.MsgBindingSuccess, tx, nil, ep.Key, true, log)
 					if _, err := ch.Send(resp); err != nil {
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}

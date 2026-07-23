@@ -7,6 +7,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — use whatsmeow's first-class call API
+- Whatsmeow now owns 1:1 call signaling, call-key exchange, relay election, mute events,
+  and independent video-flow transitions. Meowcaller consumes the typed handoff events
+  and remains responsible for RTP/SRTP, MLow, H.264 framing, reactions, and diagnostics.
+- Removed the duplicated `signaling` package and all raw-node/unsafe ack interception.
+- Moved the QR-pairing browser call console into the standalone `examples/web` module.
+
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
   registration + a Sink interface), so it reads like any mainstream media API:

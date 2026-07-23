@@ -60,3 +60,35 @@ func TestVideoBridgePageSendsCallReactions(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoBridgePageRotatesPixelsInsideStableStage(t *testing.T) {
+	for _, behavior := range []string{
+		"function drawRemoteFrame(f)",
+		"remote.width=portrait?h:w",
+		"paint.rotate(Math.PI/2)",
+		"remoteOrientation=+e.data||0",
+		".remote-wrap,.local-wrap",
+	} {
+		if !strings.Contains(videoBridgePage, behavior) {
+			t.Errorf("page does not contain %q", behavior)
+		}
+	}
+	if strings.Contains(videoBridgePage, "remote.style.transform") {
+		t.Fatal("page still rotates the canvas element and can break the layout")
+	}
+}
+
+func TestVideoBridgePageUsesCapturedFrameDimensions(t *testing.T) {
+	for _, behavior := range []string{
+		"f.displayWidth!==encodedWidth",
+		"width:encodedWidth,height:encodedHeight",
+		"forceKeyframe=true",
+	} {
+		if !strings.Contains(videoBridgePage, behavior) {
+			t.Errorf("page does not contain %q", behavior)
+		}
+	}
+	if strings.Contains(videoBridgePage, "width:640,height:480") {
+		t.Fatal("page still hardcodes the encoder to 640x480")
+	}
+}

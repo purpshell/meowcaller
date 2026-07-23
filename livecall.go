@@ -4,7 +4,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purpshell/meowcaller/signaling"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -46,7 +45,20 @@ type CallReaction struct {
 func (c *Call) ID() string { return c.id }
 
 // Peer returns the remote party's LID.
-func (c *Call) Peer() types.JID { return c.peer }
+func (c *Call) Peer() types.JID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peer
+}
+
+func (c *Call) setPeer(peer types.JID) {
+	if peer.IsEmpty() {
+		return
+	}
+	c.mu.Lock()
+	c.peer = peer
+	c.mu.Unlock()
+}
 
 // State returns the call's current phase.
 func (c *Call) State() CallPhase {
@@ -84,18 +96,18 @@ func (c *Call) Hangup() error { return c.eng.hangup(c) }
 // StartVideo requests an audio-to-video upgrade. Outbound video remains gated until
 // the peer acknowledges the transition with state 4 or state 1.
 func (c *Call) StartVideo() error {
-	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeRequestV2)
+	return c.eng.transitionVideo(c.id, types.CallVideoStateUpgradeRequestV2)
 }
 
 // AcceptVideo accepts a pending peer video upgrade without changing this client's
 // independent outbound video state.
 func (c *Call) AcceptVideo() error {
-	return c.eng.transitionVideo(c.id, signaling.VideoStateUpgradeAccept)
+	return c.eng.transitionVideo(c.id, types.CallVideoStateUpgradeAccept)
 }
 
 // StopVideo stops this client's outbound video while preserving peer video and audio.
 func (c *Call) StopVideo() error {
-	return c.eng.transitionVideo(c.id, signaling.VideoStateStopped)
+	return c.eng.transitionVideo(c.id, types.CallVideoStateStopped)
 }
 
 // SetVideoEnabled mutes or unmutes this client's outbound camera flow with state 0/1.
@@ -107,6 +119,11 @@ func (c *Call) SetVideoEnabled(enabled bool) error {
 // SetVideoOrientation announces the local camera rotation as quarter turns clockwise.
 func (c *Call) SetVideoOrientation(orientation int) error {
 	return c.eng.setVideoOrientation(c.id, orientation)
+}
+
+// SetMuted announces this client's microphone mute state to the peer.
+func (c *Call) SetMuted(muted bool) error {
+	return c.eng.setMuted(c.id, muted)
 }
 
 // SendReaction sends an emoji over this call's RTC app-data stream. Pass an empty

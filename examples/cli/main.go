@@ -6,7 +6,6 @@
 //	cli listen                    Log in and print incoming call signaling.
 //	cli autoaccept [file.wav]     Log in and auto-answer incoming calls, wiring
 //	                              mic ↔ speaker (or recording the peer to file.wav).
-//	cli web                       Start a localhost browser call console.
 //
 // meowcaller wraps an already-connected whatsmeow client: this command owns the
 // whatsmeow login/QR boilerplate and the logger, then hands the connected client
@@ -111,8 +110,6 @@ func main() {
 			recordPath = os.Args[2]
 		}
 		err = runListen(ctx, rec, true, recordPath)
-	case "web":
-		err = runWebConsole(ctx, rec)
 	default:
 		usage()
 	}
@@ -122,7 +119,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: cli [--diagdump <dir>] <call <target> | play <target> <file.mp3|wav|opus> | listen | autoaccept [record.wav] | web>")
+	fmt.Fprintln(os.Stderr, "usage: cli [--diagdump <dir>] <call <target> | play <target> <file.mp3|wav|opus> | listen | autoaccept [record.wav]>")
 	os.Exit(2)
 }
 
@@ -232,19 +229,6 @@ func runListen(ctx context.Context, rec *diag.Recorder, autoAccept bool, recordP
 		wireLifecycle(ctx, call)
 		if err := wireMic(call); err != nil {
 			log.Error().Err(err).Msg("open mic failed")
-		}
-		// Ephemeral video bridge: open the printed URL in a browser to SEE the peer's video
-		// and SEND your camera (the browser does H.264 decode/encode via WebCodecs;
-		// meowcaller carries it over the relay). Closed on Ctrl+C.
-		if vb, err := newVideoBridge(*zerolog.Ctx(ctx)); err == nil {
-			call.ReceiveVideo(meowcaller.VideoSinkFunc(vb.WriteFrame))
-			call.OnVideoState(func(s meowcaller.VideoState) { vb.SetOrientation(s.Orientation) })
-			vb.OnFrame(func(au []byte) { _ = call.SendVideoWithDuration(au, browserVideoFrameDuration) })
-			call.OnVideoKeyframeRequest(vb.RequestKeyframe)
-			go func() { <-ctx.Done(); _ = vb.Close() }()
-			log.Info().Str("video_url", vb.URL()).Bool("offer_is_video", call.IsVideo()).Msg("open in a browser to see/send video")
-		} else {
-			log.Error().Err(err).Msg("video bridge failed")
 		}
 		if recordPath != "" {
 			rec, err := meowcaller.WAVRecorder(recordPath)
