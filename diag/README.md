@@ -10,9 +10,21 @@ call-state events remain independently searchable.
 
 ## WhatsApp Web reference capture
 
-This is a minimal call logger for comparing WhatsApp Web behavior with
-meowcaller. It has no user interface and only records call-related signaling,
-VoIP stack calls, internal VoIP logs, call-model changes, and media acquisition.
+This is a headless build of the v4 WhatsApp logger without its viewer, composer,
+experiments UI, or `.wslc` workflow. Its WAM and normal WhatsApp logger rows are
+streamed to JSONL alongside call signaling and wire bytes, parsed relay
+topology, VoIP stack calls and logs, call-model and page-input changes, media
+acquisition, WebRTC session descriptions and ICE state, data-channel traffic,
+media tracks, audio contexts, WebRTC statistics, worker-realm data channels,
+and focused Chrome DevTools Protocol events. Page and headless logger events use
+the `wa-voip-diag/v2` capture schema; worker payloads use `wa-voip-worker/v2`.
+The headless sender bounds its retry queue, and the normal logger hooks isolate
+diagnostic failures so they cannot block WhatsApp's original encode/decode calls.
+
+The full worker and CDP capture requires Chrome's `tabs` and `debugger`
+permissions. Chrome shows a debugger attachment banner while it is active. Do
+not open DevTools on the captured WhatsApp tab because it competes for the same
+debugger session.
 
 Start the local collector from the repository root:
 

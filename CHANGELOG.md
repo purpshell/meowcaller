@@ -7,6 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### diag/extension — mirror the v4 WhatsApp logger as a headless capture — `implemented`
+- Replaced the minimal page-only logger with the v4 logger's byte-identical WAM,
+  normal logger, VoIP signaling, browser-media, and worker-data-channel hooks.
+- Added the v4 Chrome debugger/CDP auto-attach path and streams both normal logger
+  rows and `wa-voip-diag/v2` events directly to the localhost JSONL collector.
+- Omitted only the viewer, composer, experiments UI, and `.wslc` workflow. Three
+  upstream media hook files match v4 byte-for-byte; `main.js`, `wam.js`, and
+  `voip-capture.js` keep the same capture surface with observer-failure isolation,
+  handled async rejections, accurate WAM sequence/global decoding, and no mutation
+  of live WAM events.
+  JavaScript capture/package tests and the Go collector test pass.
+
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
   registration + a Sink interface), so it reads like any mainstream media API:

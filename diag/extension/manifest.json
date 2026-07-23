@@ -1,17 +1,33 @@
 {
   "manifest_version": 3,
-  "name": "meowcaller diagnostics",
-  "version": "1.0.0",
-  "description": "Minimal WhatsApp Web call diagnostics",
-  "host_permissions": ["http://127.0.0.1:3219/*"],
-  "background": { "service_worker": "sender.js" },
+  "name": "meowcaller WhatsApp VoIP diagnostics",
+  "version": "4.1.0",
+  "description": "Headless WhatsApp Web VoIP research capture",
+  "permissions": ["tabs", "debugger"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "src/bg.js",
+    "type": "module"
+  },
   "content_scripts": [{
     "matches": ["https://web.whatsapp.com/*"],
-    "js": ["relay.js"],
+    "js": ["src/content-script.js"],
     "run_at": "document_start"
   }],
   "web_accessible_resources": [{
-    "resources": ["hooks.js"],
+    "resources": [
+      "src/wam.js",
+      "src/voip-capture-core.js",
+      "src/voip-browser-hooks.js",
+      "src/main.js",
+      "src/voip-capture.js"
+    ],
     "matches": ["https://web.whatsapp.com/*"]
-  }]
+  }],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
 }
