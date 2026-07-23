@@ -61,9 +61,9 @@ func buildRecvKeyCandidates(callKey []byte, peerJID string, log zerolog.Logger) 
 // selectRecvKey locks p.recvKeys onto the candidate whose WARP MI tag matches the
 // packet. No-op once locked; after maxRecvSelectPackets probes it gives up and
 // keeps the default key.
-func (p *MediaPipeline) selectRecvKey(withoutTag, recvTag []byte, roc uint32) {
+func (p *MediaPipeline) selectRecvKey(withoutTag, recvTag []byte, roc uint32) bool {
 	if p.recvLocked {
-		return
+		return true
 	}
 	for i := range p.recvCandidates {
 		c := &p.recvCandidates[i]
@@ -72,7 +72,7 @@ func (p *MediaPipeline) selectRecvKey(withoutTag, recvTag []byte, roc uint32) {
 			p.recvLocked = true
 			p.recvCandidates = nil
 			p.log.Info().Str("recv_participant", c.id).Msg("locked e2e recv key via warp mi tag")
-			return
+			return true
 		}
 	}
 	p.recvTries++
@@ -81,4 +81,5 @@ func (p *MediaPipeline) selectRecvKey(withoutTag, recvTag []byte, roc uint32) {
 		p.recvCandidates = nil
 		p.log.Warn().Int("tries", p.recvTries).Msg("no recv key matched warp mi tag; keeping default key")
 	}
+	return false
 }
