@@ -284,8 +284,11 @@ func (p *MediaPipeline) UnprotectAudio(packet []byte) (rtp.RtpHeader, []byte, bo
 		return rtp.RtpHeader{}, nil, false
 	}
 	p.recvMu.Lock()
-	roc := p.recvRoc.GuessRoc(header.SequenceNumber)
-	p.selectRecvKey(withoutTag, packet[len(packet)-p.warpMITagLen:], roc)
+	nextRecvRoc := p.recvRoc
+	roc := nextRecvRoc.GuessRoc(header.SequenceNumber)
+	if p.selectRecvKey(withoutTag, packet[len(packet)-p.warpMITagLen:], roc) {
+		p.recvRoc = nextRecvRoc
+	}
 	plain, err := srtp.CryptPayload(&p.recvKeys, header.Ssrc, header.SequenceNumber, roc, withoutTag[headerLen:])
 	p.recvMu.Unlock()
 	if err != nil {
