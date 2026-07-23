@@ -3,6 +3,7 @@ package meowcaller
 import (
 	"github.com/purpshell/meowcaller/diag"
 	"github.com/rs/zerolog"
+	"time"
 )
 
 // Option configures optional, non-behavioral aspects of the call/media types —
@@ -10,16 +11,28 @@ import (
 type Option func(*config)
 
 type config struct {
-	log  zerolog.Logger
-	diag *diag.Recorder
+	log                           zerolog.Logger
+	diag                          *diag.Recorder
+	incomingAcceptFallbackTimeout time.Duration
 }
 
 func resolveConfig(opts []Option) config {
-	c := config{log: zerolog.Nop()}
+	c := config{log: zerolog.Nop(), incomingAcceptFallbackTimeout: 1500 * time.Millisecond}
 	for _, opt := range opts {
 		opt(&c)
 	}
 	return c
+}
+
+// WithIncomingAcceptFallbackTimeout sets how long an answered incoming call waits
+// for the peer's optional mute_v2 signal after relay transport is ready.
+func WithIncomingAcceptFallbackTimeout(timeout time.Duration) Option {
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/call-mute.yaml#L22-L34
+	return func(c *config) {
+		if timeout > 0 {
+			c.incomingAcceptFallbackTimeout = timeout
+		}
+	}
 }
 
 // WithLogger sets the zerolog logger for debug/trace diagnostics. The library never

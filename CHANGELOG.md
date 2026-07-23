@@ -7,6 +7,77 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — preserve the elected relay on incoming final accept — `implemented`
+- Incoming from-start video accepts now omit both `<te>` and `<capability>`, matching
+  the captured reference call site. Relay readiness still gates the send, but the
+  caller's endpoint is no longer echoed back after allocation.
+- A live diagnostic isolated the fault: peer audio and video RTP reached the callee
+  before the final accept, then stopped immediately when the accept carrying those
+  two extra children was sent. Voice accepts keep their negotiated capability.
+- Deterministic tests pin the direction-specific shape and ensure the required wrapper
+  id and offer metadata remain intact. Live post-fix validation is still required.
+
+### meowcaller — echo incoming offer metadata in final accept — `implemented`
+- Incoming offers now retain only `peer_abtest_bucket` and
+  `peer_abtest_bucket_id_list`, and the final accept echoes exactly the fields that
+  were present instead of sending a fixed bucket list from an unrelated capture.
+- Unknown or non-string offer attributes are not forwarded, and offers without
+  supported metadata omit the `<metadata>` child entirely.
+- Deterministic tests cover extraction, filtering, exact echo, omission, relay and
+  capability retention, wrapper id presence, and the captured video accept shape.
+
+### signaling — mirror the captured incoming video handshake — `implemented`
+- Incoming video `preaccept` now advertises the captured H.264 decoder, zero-sized
+  preaccept geometry, and the `e0 bb 13` callee capability. Voice preaccept remains
+  audio-only and uses `e0 bb 07`.
+- Incoming video `accept` now places `<video dec="H264" device_orientation="0">`
+  directly after audio, then metadata before capability, matching the captured
+  child order as one complete wire shape rather than changing isolated fields.
+- Deterministic stanza tests pin the child order, wrapper ids, exact video attributes,
+  capability bytes, metadata position, and voice compatibility. Live relay validation
+  remains required before this wire shape can be called KAT-verified.
+
+### meowcaller — negotiate callee video in the incoming final accept — `KAT-verified`
+- A from-start incoming video call now appends the WaCalls H.264 callee marker
+  `<video enc="h264">` at the end of the final `<accept>`. Keeping the established
+  audio/relay/capability sequence intact is load-bearing; voice accepts remain free of video.
+- Removed the decoder-state-shaped marker (`dec="H264" device_orientation="0"`) from the
+  accept. A real incoming call using that shape sent PC video but received zero audio/video
+  frames from the phone, showing that an in-call decoder state is not an accept-time encoder
+  advertisement for this peer.
+- Removed the standalone `<video state="1">` sent immediately after acceptance. A real-call
+  diagnostic showed that it collided with the caller's from-start state sequence and stopped
+  inbound video; standalone states remain reserved for explicit in-call transitions.
+- Deterministic tests pin the accept child order, exact video attrs, voice compatibility,
+  single-send idempotency, and absence of a second video-state stanza.
+
+### signaling — restore the established from-start video preaccept and capability — `KAT-verified`
+- Incoming video now keeps the same audio-shaped `preaccept` as an incoming voice call. The
+  original offer and the captured final-accept video child mark the call as from-start video.
+- Restored the documented capability bytes (`e4 bb 07` for preaccept and `e4 bb 13` for
+  accept). The distinct observed video-offer capability (`e0 fa 13`) is unchanged.
+- A real incoming call had accepted signaling and local RTP but no peer RTP while using
+  the experimental answer shape. Tests now pin the established child order and blobs.
+
+### meowcaller — complete the incoming final-accept relay selection — `KAT-verified`
+- The incoming final `<accept>` now echoes the six-byte address of the relay endpoint
+  selected for media and includes the negotiated capability blob. Previously the engine
+  waited for relay readiness but discarded that endpoint when it built the accept, so a
+  peer could acknowledge video state while the relay never bridged its RTP.
+- Added a deterministic stanza test that fails when either the selected `<te priority="2">`
+  endpoint or capability is omitted. The same path is shared by incoming voice and video.
+
+### meowcaller — make incoming final accept bounded and idempotent — `KAT-verified`
+- Replaced the fragile `acceptPending` flag with an explicit, mutex-protected incoming
+  accept state machine. The normal `mute_v2` path still sends immediately, while a
+  configurable 1.5-second fallback starts only after relay transport is ready.
+- Final accept is sent exactly once across duplicate `Answer`, concurrent `mute_v2` and
+  timeout callbacks, cancellation, rejection, remote termination, and late callbacks.
+  Network I/O runs outside the state lock and is cancelled during cleanup; an ambiguous
+  send failure is not retried and is exposed as a typed diagnostic error.
+- Deterministic fake-clock/fake-sender tests cover voice and video calls, both event
+  orderings, absent `mute_v2`, cleanup, send failure, and end-during-send concurrency.
+
 ### meowcaller — refine the video API to mirror the audio Source/Sink model
 - Reshaped the ad-hoc video surface into the same shape as audio (whatsmeow-style callback
   registration + a Sink interface), so it reads like any mainstream media API:

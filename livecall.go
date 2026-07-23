@@ -32,6 +32,7 @@ type Call struct {
 	onVideoState           func(VideoState)
 	onVideoKeyframeRequest func()
 	onReaction             func(CallReaction)
+	onIncomingAccept       func(IncomingAcceptEvent)
 }
 
 // CallReaction is a transient emoji reaction received over the call's RTC app-data stream.
@@ -181,6 +182,25 @@ func (c *Call) OnReaction(fn func(CallReaction)) {
 	c.mu.Lock()
 	c.onReaction = fn
 	c.mu.Unlock()
+}
+
+// OnIncomingAccept registers diagnostics for the final accept lifecycle of an
+// incoming call. The callback never contains raw stanzas or key material.
+func (c *Call) OnIncomingAccept(fn func(IncomingAcceptEvent)) {
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/flow-incoming-1to1.yaml#L82-L115
+	c.mu.Lock()
+	c.onIncomingAccept = fn
+	c.mu.Unlock()
+}
+
+func (c *Call) notifyIncomingAccept(event IncomingAcceptEvent) {
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/flow-incoming-1to1.yaml#L82-L115
+	c.mu.Lock()
+	fn := c.onIncomingAccept
+	c.mu.Unlock()
+	if fn != nil {
+		fn(event)
+	}
 }
 
 func (c *Call) onReactionFn() func(CallReaction) {

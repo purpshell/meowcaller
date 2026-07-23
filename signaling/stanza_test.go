@@ -113,11 +113,14 @@ func TestOfferMultiDeviceUsesDestination(t *testing.T) {
 func TestAcceptAndPreacceptShape(t *testing.T) {
 	peer, creator := peerJID(), creatorJID()
 	accept := BuildAccept(&AcceptParams{
-		CallID: "CID", To: peer, CallCreator: creator,
+		CallID: "CID", To: peer, WrapperID: "accept-wrap", CallCreator: creator,
 		AudioRates: []string{"16000"}, RelayTe: make([]byte, 6), Capability: CapabilityOffer,
 	})
 	if got := childTags(t, accept); !eqTags(got, []string{"audio", "te", "net", "encopt", "capability"}) {
 		t.Errorf("accept tags = %v", got)
+	}
+	if id, _ := attrString(accept, "id"); id != "accept-wrap" {
+		t.Errorf("accept id = %q, want accept-wrap", id)
 	}
 	pre := BuildPreaccept("CID", peer, creator, "abcd1234", []string{"8000", "16000"}, false)
 	if got := childTags(t, pre); !eqTags(got, []string{"audio", "audio", "encopt", "capability"}) {

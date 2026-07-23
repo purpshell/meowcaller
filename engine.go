@@ -32,9 +32,11 @@ import (
 type engine struct {
 	c *Client
 
-	mu           sync.Mutex
-	calls        map[string]*engineCall // keyed by call-id
-	sendCallNode func(context.Context, waBinary.Node) error
+	mu                    sync.Mutex
+	calls                 map[string]*engineCall // keyed by call-id
+	sendCallNode          func(context.Context, waBinary.Node) error
+	acceptFallbackTimeout time.Duration
+	afterFunc             func(time.Duration, func()) acceptTimer
 }
 
 // engineCall is the engine's per-call state: the public Call handle plus the inputs
@@ -63,13 +65,18 @@ type engineCall struct {
 	started          bool
 	cancel           context.CancelFunc // tears down this call's media goroutine
 
-	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
-	acceptPending bool
+	accept         incomingAccept
+	acceptMetadata waBinary.Attrs
 }
 
 // newEngine creates the engine for a Client.
 func newEngine(c *Client) *engine {
-	e := &engine{c: c, calls: map[string]*engineCall{}}
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/call-mute.yaml#L22-L34
+	timeout := 1500 * time.Millisecond
+	if c != nil && c.incomingAcceptFallbackTimeout > 0 {
+		timeout = c.incomingAcceptFallbackTimeout
+	}
+	e := &engine{c: c, calls: map[string]*engineCall{}, acceptFallbackTimeout: timeout, afterFunc: func(delay time.Duration, fn func()) acceptTimer { return time.AfterFunc(delay, fn) }}
 	if c != nil && c.wa != nil {
 		e.sendCallNode = func(ctx context.Context, node waBinary.Node) error {
 			return c.wa.DangerousInternals().SendNode(ctx, node)
@@ -495,6 +502,8 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	m.creator = ev.CallCreator
 	m.from = ev.From
 	m.direction = CallDirectionIncoming
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/d37b1756d05fb34c9b6c2410c48dd20d27394929/wacore/src/stanza/call.rs#L135-L155
+	m.acceptMetadata = captureIncomingAcceptMetadata(ev.Data)
 	// A <video> child marks a call that starts with both video directions enabled.
 	isVideo := signaling.OfferHasVideo(ev.Data)
 	m.localVideo = isVideo
@@ -514,6 +523,13 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	// been preaccepted.
 	if err := e.sendPreaccept(ev.CallID, ev.From, ev.CallCreator, isVideo); err != nil {
 		e.c.log.Warn().Err(err).Str("call_id", ev.CallID).Msg("preaccept failed")
+	} else {
+		// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/call-preaccept.yaml#L12-L16
+		e.mu.Lock()
+		if current := e.calls[ev.CallID]; current == m {
+			current.accept.preacceptSent = true
+		}
+		e.mu.Unlock()
 	}
 
 	if fn := e.c.incomingCallHandler(); fn != nil {
@@ -540,49 +556,38 @@ func (e *engine) sendPreaccept(callID string, to, creator types.JID, video bool)
 	return nil
 }
 
-// answer accepts an inbound call: it marks the call to accept (the actual <accept> is
-// deferred until the caller's <mute_v2>, which onCallRaw fires) and brings media up. The
-// <preaccept> was already sent eagerly when the offer arrived, so Answer only commits to
-// the call. Media comes up once callKey+relay are both known.
+// answer requests the final accept for an inbound call. Media still becomes active only
+// from the existing transport/media evidence, never from the signaling write alone.
 func (e *engine) answer(c *Call) error {
-	m := e.lookup(c.id)
-	if m == nil {
-		return fmt.Errorf("meowcaller: unknown call %s", c.id)
-	}
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/flow-incoming-1to1.yaml#L82-L115
 	e.mu.Lock()
-	m.acceptPending = true
+	m := e.calls[c.id]
+	if m == nil || m.direction != CallDirectionIncoming {
+		e.mu.Unlock()
+		return fmt.Errorf("meowcaller: unknown incoming call %s", c.id)
+	}
+	if m.accept.answerRequested {
+		e.mu.Unlock()
+		return nil
+	}
+	if !m.accept.preacceptSent {
+		e.mu.Unlock()
+		return &IncomingAcceptError{Kind: "preaccept_not_sent", Err: errors.New("final accept requires successful preaccept")}
+	}
+	m.accept.answerRequested = true
+	m.accept.state = incomingAcceptRequested
+	muteReceived := m.accept.muteV2Received
 	e.mu.Unlock()
 
+	e.c.log.Info().Str("call_id", c.id).Bool("mute_v2_received", muteReceived).Msg("incoming answer requested")
+	e.notifyIncomingAccept(c, "incoming_accept_requested", "", nil)
 	c.setPhase(CallPhaseConnecting)
 	e.maybeStartMedia(c.id)
+	if muteReceived {
+		return e.trySendFinalAccept(c.id, AcceptTriggerMuteV2)
+	}
+	e.armIncomingAcceptFallback(c.id)
 	return nil
-}
-
-// sendAccept sends the deferred callee <accept> (once), in the WA-Web format (metadata +
-// single rate — the peer keeps the call alive with this; capability+both-rates fails).
-func (e *engine) sendAccept(callID string, to, creator types.JID) {
-	e.mu.Lock()
-	m := e.calls[callID]
-	if m == nil || !m.acceptPending {
-		e.mu.Unlock()
-		return
-	}
-	isVideo := m.localVideo || m.remoteVideo
-	m.acceptPending = false
-	e.mu.Unlock()
-
-	accept := signaling.BuildAccept(&signaling.AcceptParams{
-		CallID: callID, To: to, CallCreator: creator,
-		AudioRates: []string{"16000"},
-		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
-		Video:      isVideo,
-	})
-	accept.Attrs["id"] = e.c.wa.DangerousInternals().GenerateRequestID()
-	if err := e.c.wa.DangerousInternals().SendNode(context.Background(), accept); err != nil {
-		e.c.log.Error().Err(err).Str("call_id", callID).Msg("send accept failed")
-		return
-	}
-	e.c.log.Info().Str("call_id", callID).Bool("video", isVideo).Msg("accepted (after mute_v2)")
 }
 
 // reject declines an inbound call.
@@ -631,12 +636,22 @@ func (e *engine) onRelay(callID string, data *waBinary.Node) {
 		return
 	}
 	m.relay = parseRelayData(r)
+	muteReceived := m.accept.muteV2Received
+	answerRequested := m.accept.answerRequested
 	e.mu.Unlock()
+	// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/call-transport.yaml#L24-L51
+	if answerRequested && muteReceived {
+		if err := e.trySendFinalAccept(callID, AcceptTriggerMuteV2); err != nil && !errors.Is(err, ErrIncomingAcceptCancelled) {
+			e.c.log.Error().Err(err).Str("call_id", callID).Msg("incoming accept after transport failed")
+		}
+	} else {
+		e.armIncomingAcceptFallback(callID)
+	}
 	e.maybeStartMedia(callID)
 }
 
 // onRelayLatency answers the caller's relaylatency probes (the callee's half of the
-// relay election). It does NOT send the accept — that is deferred until <mute_v2>.
+// relay election).
 func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 	m := e.lookup(ev.CallID)
 	if m == nil || m.direction != CallDirectionIncoming {
@@ -822,9 +837,6 @@ func (e *engine) onCallAck(ack *waBinary.Node) {
 	e.onRelay(callID, ack)
 }
 
-// onCallRaw sees every raw <call> node before whatsmeow processes it. It fires the
-// deferred <accept> when the caller's first <mute_v2> arrives (whatsmeow surfaces no
-// mute event, so this is the only place we see it).
 // onCallRaw inspects a raw <call> node before whatsmeow processes it. It returns true when
 // it has fully handled the node (including sending the appropriate ack), so the caller skips
 // whatsmeow's generic typeless ack.
@@ -842,32 +854,35 @@ func (e *engine) onCallRaw(callNode *waBinary.Node) bool {
 		}
 		muteState := mv.String("mute-state")
 		muted := muteState == "1"
-		// The deferred <accept> fires on the FIRST mute_v2 only — it arrives right after
-		// the relaylatency/transport. Later mute_v2 nodes are in-call mute-state changes
-		// (e.g. 1→0) and must not re-run the accept path on an already-accepted call.
+		// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/call-mute.yaml#L22-L34
 		e.mu.Lock()
 		m := e.calls[callID]
-		pending := m != nil && m.acceptPending
+		requested := m != nil && m.accept.answerRequested
+		if m != nil {
+			m.accept.muteV2Received = true
+		}
 		e.mu.Unlock()
 		if m != nil && m.call != nil {
 			if fn := m.call.onMuteStateFn(); fn != nil {
 				fn(muted)
 			}
 		}
-		if !pending {
+		if !requested {
 			e.c.log.Debug().
 				Str("call_id", callID).
 				Str("mute_state", muteState).
 				Bool("muted", muted).
-				Msg("mute_v2 observed; call not awaiting accept")
+				Msg("mute_v2 observed before incoming answer")
 			return false
 		}
 		e.c.log.Info().
 			Str("call_id", callID).
 			Str("mute_state", muteState).
 			Bool("muted", muted).
-			Msg("first mute_v2 received; sending deferred accept")
-		e.sendAccept(callID, callNode.AttrGetter().JID("from"), mv.JID("call-creator"))
+			Msg("mute_v2 released incoming final accept")
+		if err := e.trySendFinalAccept(callID, AcceptTriggerMuteV2); err != nil && !errors.Is(err, ErrIncomingAcceptCancelled) {
+			e.c.log.Error().Err(err).Str("call_id", callID).Msg("incoming accept after mute_v2 failed")
+		}
 		return false
 	case "video":
 		// Acknowledge the <video> stanza with type="video" — the mid-call video-upgrade
@@ -1004,18 +1019,37 @@ func (e *engine) finishCall(callID, reason string) {
 	e.mu.Lock()
 	m := e.calls[callID]
 	if m != nil {
+		// Source of truth: https://github.com/WhiskeySockets/wacrg/blob/0114515cef5c0344a8a864f6ad5ff58e650550ed/spec/signalling/flow-incoming-1to1.yaml#L74-L115
 		delete(e.calls, callID)
 	}
 	var cancel context.CancelFunc
+	var acceptCancel context.CancelFunc
+	var acceptTimer acceptTimer
+	var acceptWasPending bool
 	var call *Call
 	if m != nil {
 		cancel = m.cancel
 		m.cancel = nil
+		acceptCancel = m.accept.sendCancel
+		m.accept.sendCancel = nil
+		acceptTimer = m.accept.timer
+		m.accept.timer = nil
+		acceptWasPending = m.accept.state == incomingAcceptRequested || m.accept.state == incomingAcceptWaiting || m.accept.state == incomingAcceptSending
+		m.accept.state = incomingAcceptCancelled
 		call = m.call
 	}
 	e.mu.Unlock()
+	if acceptTimer != nil {
+		acceptTimer.Stop()
+	}
+	if acceptCancel != nil {
+		acceptCancel()
+	}
 	if cancel != nil {
 		cancel()
+	}
+	if acceptWasPending {
+		e.notifyIncomingAccept(call, "incoming_accept_cancelled", "", ErrIncomingAcceptCancelled)
 	}
 	if call == nil || call.State() == CallPhaseEnded {
 		return
@@ -1191,6 +1225,7 @@ type relayEndpoint struct {
 	tokenID     uint32
 	authTokenID uint32
 	isFNA       bool
+	wireAddress []byte // original six-byte IPv4:port blob echoed in the final accept
 	addresses   []relayAddress
 }
 
@@ -1324,6 +1359,7 @@ func parseRelayData(node *waBinary.Node) *relayData {
 			tokenID:     attrUint(te2, "token_id"),
 			authTokenID: attrUint(te2, "auth_token_id"),
 			isFNA:       te2.AttrGetter().String("is_fna") == "1",
+			wireAddress: append([]byte(nil), ab...),
 			addresses: []relayAddress{{
 				ipv4: fmt.Sprintf("%d.%d.%d.%d", ab[0], ab[1], ab[2], ab[3]),
 				port: binary.BigEndian.Uint16(ab[4:6]),
