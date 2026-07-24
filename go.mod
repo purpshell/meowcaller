@@ -10,7 +10,7 @@ require (
 	github.com/pion/opus v0.1.0
 	github.com/pion/sctp v1.9.4
 	github.com/rs/zerolog v1.35.1
-	go.mau.fi/whatsmeow v0.0.0-20260723081031-edfef3172122
+	go.mau.fi/whatsmeow v0.0.0-20260724091424-20a6996015e1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -34,4 +34,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace go.mau.fi/whatsmeow => github.com/titan-api/whatsmeow v0.0.0-20260723081031-edfef3172122
+replace go.mau.fi/whatsmeow => github.com/titan-api/whatsmeow v0.0.0-20260724091424-20a6996015e1

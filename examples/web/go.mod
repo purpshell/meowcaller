@@ -7,7 +7,7 @@ require (
 	github.com/purpshell/meowcaller/audio/malgo v0.0.0
 	github.com/rs/zerolog v1.35.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	go.mau.fi/whatsmeow v0.0.0-20260723081031-edfef3172122
+	go.mau.fi/whatsmeow v0.0.0-20260724091424-20a6996015e1
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.53.0
 )
@@ -51,4 +51,4 @@ replace github.com/purpshell/meowcaller => ../..
 
 replace github.com/purpshell/meowcaller/audio/malgo => ../../audio/malgo
 
-replace go.mau.fi/whatsmeow => github.com/titan-api/whatsmeow v0.0.0-20260723081031-edfef3172122
+replace go.mau.fi/whatsmeow => github.com/titan-api/whatsmeow v0.0.0-20260724091424-20a6996015e1

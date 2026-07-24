@@ -186,7 +186,10 @@ func TestOutgoingPeerAcceptLifecycleAndRekey(t *testing.T) {
 	if call.State() != CallPhaseRinging {
 		t.Fatalf("phase after preaccept = %d, want Ringing", call.State())
 	}
-	eng.onAccept(&events.CallAccept{BasicCallMeta: types.BasicCallMeta{CallID: call.ID(), From: answeringDevice}})
+	eng.onAccept(&events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: call.ID(), From: peerJID()},
+		PeerLID:       answeringDevice,
+	})
 	if call.State() != CallPhaseConnecting || rekeyed != answeringDevice.String() {
 		t.Fatalf("accept = phase:%d rekey:%q", call.State(), rekeyed)
 	}

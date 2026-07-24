@@ -395,12 +395,16 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 		e.mu.Unlock()
 		return
 	}
-	answeringPeer := ev.From.String()
+	answeringJID := ev.PeerLID
+	if answeringJID.IsEmpty() {
+		answeringJID = ev.From
+	}
+	answeringPeer := answeringJID.String()
 	var rekeyPeer func(string) error
 	if answeringPeer != "" && answeringPeer != m.peerLID {
 		m.peerLID = answeringPeer
 		rekeyPeer = m.rekeyPeer
-		m.call.setPeer(ev.From)
+		m.call.setPeer(answeringJID)
 	}
 	if !ev.From.IsEmpty() {
 		m.from = ev.From

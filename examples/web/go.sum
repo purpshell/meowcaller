@@ -65,8 +65,8 @@ github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1
 github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/titan-api/whatsmeow v0.0.0-20260723081031-edfef3172122 h1:fX0UrouYCogiWi+pBsSxbA4VtzMq+xHa3HPhiGqKUX0=
-github.com/titan-api/whatsmeow v0.0.0-20260723081031-edfef3172122/go.mod h1:Iy/xVSuVU2payR26MB1hv0UZUWRraEn4qKZ7+VRHulg=
+github.com/titan-api/whatsmeow v0.0.0-20260724091424-20a6996015e1 h1:l8eAM/Z4jYbV3+W/swnS7nMcmMZv9mLDvnXZ0bcW6tY=
+github.com/titan-api/whatsmeow v0.0.0-20260724091424-20a6996015e1/go.mod h1:Iy/xVSuVU2payR26MB1hv0UZUWRraEn4qKZ7+VRHulg=
 github.com/vektah/gqlparser/v2 v2.5.27 h1:RHPD3JOplpk5mP5JGX8RKZkt2/Vwj/PZv0HxTdwFp0s=
 github.com/vektah/gqlparser/v2 v2.5.27/go.mod h1:D1/VCZtV3LPnQrcPBeR/q5jkSQIPti0uYCP/RI0gIeo=
 go.mau.fi/libsignal v0.2.2 h1:QV+XdzQkm3x3aSG7FcqfGSZuFXz83pRZPBFaPygHbOU=
