@@ -373,6 +373,94 @@ func TestOutgoingAcceptRekeysToAnsweringDevice(t *testing.T) {
 	}
 }
 
+func TestParseRelayDataResolvesElectedPeerDevice(t *testing.T) {
+	primary := peerJID()
+	companion := peerJID()
+	companion.Device = 7
+	relay := &waBinary.Node{
+		Tag:   "relay",
+		Attrs: waBinary.Attrs{"peer_pid": "2", "self_pid": "1"},
+		Content: []waBinary.Node{
+			{Tag: "participant", Attrs: waBinary.Attrs{"pid": "0", "jid": primary}},
+			{Tag: "participant", Attrs: waBinary.Attrs{"pid": "2", "jid": companion}},
+		},
+	}
+
+	rd := parseRelayData(relay)
+
+	if rd.peerJID != companion {
+		t.Fatalf("relay peer = %s, want %s", rd.peerJID, companion)
+	}
+}
+
+func TestRelayRekeysToElectedPeerDevice(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.peerLID = peerJID().String()
+	companion := peerJID()
+	companion.Device = 7
+	var rekeyed string
+	m.rekeyPeer = func(peer string) error {
+		rekeyed = peer
+		return nil
+	}
+	relay := &waBinary.Node{
+		Tag:   "relay",
+		Attrs: waBinary.Attrs{"peer_pid": "2"},
+		Content: []waBinary.Node{
+			{Tag: "participant", Attrs: waBinary.Attrs{"pid": "2", "jid": companion}},
+		},
+	}
+
+	eng.onRelay(call.ID(), relay)
+
+	if rekeyed != companion.String() {
+		t.Fatalf("rekeyed peer = %q, want %q", rekeyed, companion.String())
+	}
+	eng.mu.Lock()
+	gotPeer := m.peerLID
+	eng.mu.Unlock()
+	if gotPeer != companion.String() {
+		t.Fatalf("stored peer = %q, want %q", gotPeer, companion.String())
+	}
+}
+
+func TestUnqualifiedAcceptPreservesRelayElectedPeerDevice(t *testing.T) {
+	eng, call := testEngineWithOutgoingCall()
+	m := eng.calls[call.ID()]
+	m.peerLID = peerJID().String()
+	companion := peerJID()
+	companion.Device = 7
+	var rekeyed []string
+	m.rekeyPeer = func(peer string) error {
+		rekeyed = append(rekeyed, peer)
+		return nil
+	}
+	relay := &waBinary.Node{
+		Tag:   "relay",
+		Attrs: waBinary.Attrs{"peer_pid": "2"},
+		Content: []waBinary.Node{
+			{Tag: "participant", Attrs: waBinary.Attrs{"pid": "2", "jid": companion}},
+		},
+	}
+	eng.onRelay(call.ID(), relay)
+
+	eng.onAccept(&events.CallAccept{
+		BasicCallMeta: types.BasicCallMeta{CallID: call.ID(), From: peerJID()},
+		Data:          &waBinary.Node{Tag: "accept"},
+	})
+
+	if len(rekeyed) != 1 || rekeyed[0] != companion.String() {
+		t.Fatalf("rekeyed peers = %v, want only %q", rekeyed, companion.String())
+	}
+	eng.mu.Lock()
+	gotPeer := m.peerLID
+	eng.mu.Unlock()
+	if gotPeer != companion.String() {
+		t.Fatalf("stored peer after accept = %q, want %q", gotPeer, companion.String())
+	}
+}
+
 func TestOutgoingPeerAcceptCallbackFiresOnceAfterMediaStarted(t *testing.T) {
 	eng, call := testEngineWithOutgoingCall()
 	call.setPhase(CallPhaseConnecting)

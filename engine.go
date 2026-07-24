@@ -501,6 +501,9 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	m.remoteVideo = isVideo
 	if r := findRelay(ev.Data); r != nil {
 		m.relay = parseRelayData(r)
+		if !m.relay.peerJID.IsEmpty() {
+			m.peerLID = m.relay.peerJID.String()
+		}
 	}
 	e.applyVoipSettingsCodec(m, ev.Data, ev.CallID)
 	e.mu.Unlock()
@@ -624,14 +627,33 @@ func (e *engine) onRelay(callID string, data *waBinary.Node) {
 	if r == nil {
 		return
 	}
+	rd := parseRelayData(r)
+	var rekeyPeer func(string) error
+	var peerLID string
 	e.mu.Lock()
 	m := e.calls[callID]
 	if m == nil {
 		e.mu.Unlock()
 		return
 	}
-	m.relay = parseRelayData(r)
+	m.relay = rd
+	if !rd.peerJID.IsEmpty() {
+		peerLID = rd.peerJID.String()
+		if peerLID != m.peerLID {
+			m.peerLID = peerLID
+			rekeyPeer = m.rekeyPeer
+		}
+	}
 	e.mu.Unlock()
+	if rekeyPeer != nil {
+		if err := rekeyPeer(peerLID); err != nil {
+			e.c.log.Warn().Err(err).Str("call_id", callID).Str("peer_lid", peerLID).
+				Msg("failed to rekey media to relay-elected peer")
+		} else {
+			e.c.log.Info().Str("call_id", callID).Str("peer_lid", peerLID).
+				Msg("rekeyed media to relay-elected peer")
+		}
+	}
 	e.maybeStartMedia(callID)
 }
 
@@ -713,6 +735,7 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 		e.applyVoipSettingsCodec(current, ev.Data, ev.CallID)
 		if !ev.From.IsEmpty() {
 			current.from = ev.From
+			answeringPeer = preferQualifiedPeer(current.peerLID, ev.From)
 		}
 		if answeringPeer != "" && answeringPeer != current.peerLID {
 			current.peerLID = answeringPeer
@@ -744,6 +767,21 @@ func (e *engine) onAccept(ev *events.CallAccept) {
 		"from": ev.From.String(), "platform": ev.RemotePlatform, "video": m.localVideo || m.remoteVideo,
 	})
 	e.maybeStartMedia(ev.CallID)
+}
+
+func preferQualifiedPeer(current string, signaled types.JID) string {
+	if signaled.IsEmpty() {
+		return current
+	}
+	parsed, err := types.ParseJID(current)
+	if err == nil &&
+		parsed.User == signaled.User &&
+		parsed.Server == signaled.Server &&
+		parsed.Device != 0 &&
+		signaled.Device == 0 {
+		return current
+	}
+	return signaled.String()
 }
 
 // onReject tears down an outgoing call when the peer declines it.
@@ -1198,6 +1236,7 @@ type relayData struct {
 	relayKeyASCII []byte   // raw <key> content — the STUN MESSAGE-INTEGRITY key
 	relayTokens   [][]byte // indexed <token id=…>
 	endpoints     []relayEndpoint
+	peerJID       types.JID
 }
 
 func nodeBytes(n *waBinary.Node) []byte {
@@ -1309,21 +1348,26 @@ func parseRelayData(node *waBinary.Node) *relayData {
 	rd.relayTokens = parseIndexedTokens(node, "token")
 
 	kids := node.GetChildren()
+	peerPID := node.AttrGetter().String("peer_pid")
 	for i := range kids {
-		te2 := &kids[i]
-		if te2.Tag != "te2" {
+		child := &kids[i]
+		if child.Tag == "participant" && peerPID != "" && child.AttrGetter().String("pid") == peerPID {
+			rd.peerJID = child.AttrGetter().JID("jid")
 			continue
 		}
-		ab := nodeBytes(te2)
+		if child.Tag != "te2" {
+			continue
+		}
+		ab := nodeBytes(child)
 		if len(ab) != 6 { // IPv4:port only (IPv6 endpoints skipped)
 			continue
 		}
 		ep := relayEndpoint{
-			relayID:     attrUint(te2, "relay_id"),
-			relayName:   te2.AttrGetter().String("relay_name"),
-			tokenID:     attrUint(te2, "token_id"),
-			authTokenID: attrUint(te2, "auth_token_id"),
-			isFNA:       te2.AttrGetter().String("is_fna") == "1",
+			relayID:     attrUint(child, "relay_id"),
+			relayName:   child.AttrGetter().String("relay_name"),
+			tokenID:     attrUint(child, "token_id"),
+			authTokenID: attrUint(child, "auth_token_id"),
+			isFNA:       child.AttrGetter().String("is_fna") == "1",
 			addresses: []relayAddress{{
 				ipv4: fmt.Sprintf("%d.%d.%d.%d", ab[0], ab[1], ab[2], ab[3]),
 				port: binary.BigEndian.Uint16(ab[4:6]),
