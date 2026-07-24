@@ -2,3 +2,4 @@
 *.pb.raw binary linguist-generated=true
 internals.go linguist-generated=true
 *.sh linguist-generated=true
+*.js linguist-generated=true
