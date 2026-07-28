@@ -1,6 +1,22 @@
 package mlow
 
-import "math"
+import (
+	"math"
+	"sync"
+)
+
+// The DCT cosine tables are constants (they depend only on nfft/order), but smplLPCAnalyzeWithF2
+// rebuilt them via genCosRow on every frame — ~16 rows of cos, profiled ~5% of the encode after the
+// FFT twiddle cache. Build them once and reuse.
+var (
+	dctTablesOnce   sync.Once
+	dctTablesCached dctTables
+)
+
+func getDctTables() *dctTables {
+	dctTablesOnce.Do(func() { dctTablesCached = buildDctTables() })
+	return &dctTablesCached
+}
 
 const (
 	SmplLPCOrder  = 16
@@ -271,9 +287,9 @@ func smplLPCAnalyzeWithF2(windowed *[SmplLPCBufLen]float32) ([SmplLPCOrder + 1]f
 		f2d[i] = float64(f2[i])
 	}
 
-	tables := buildDctTables()
+	tables := getDctTables()
 	var r [SmplLPCOrder + 1]float64
-	bruteDct(&tables, f2d, SmplLPCOrder, r[:])
+	bruteDct(tables, f2d, SmplLPCOrder, r[:])
 
 	var rc [SmplLPCOrder]float32
 	ac2rcDbl(r[:], SmplLPCOrder, smplLPCReg, rc[:])
