@@ -7,6 +7,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/celp, mlow/pitch — `implemented`
+- Optional NEON acceleration of the coarse CELP/pitch dot-product and FIR kernels
+  for `arm && cgo` builds (`celp_neon.c` + cgo bridge), pure-Go fallback in
+  `celp_fallback.go`: `celpMultSymtoepl2` (symmetric-Toeplitz mat-vec),
+  `celpFiltMa` (moving-average FIR), `peCalcCE2` (stage-1 pitch cross-correlation)
+  and the stage-2 40-tap correlation row. Only the coarse functions cross cgo
+  (one call = many dot-products) so call overhead is negligible; the leaf
+  dot-products stay in Go. Not bit-exact (fast-math); PESQ-validated (MOS
+  preserved), pure-Go tests still pass. On-device (ARMv7) real voiced speech
+  ~45ms -> ~33ms/frame with the FFT kernel; music-case ~30ms.
+
 ### mlow/fft — `implemented`
 - Optional NEON acceleration of the mixed-radix FFT for `arm && cgo` builds
   (`fft_neon.c` + cgo bridge), with a pure-Go fallback (`fft_fallback.go`) so

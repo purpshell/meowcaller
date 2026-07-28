@@ -180,6 +180,10 @@ func celpQ(num, den []float32, l int, q []float32) {
 // 2*lResp-1; x must be readable up to n+lResp (zero padded).
 func celpMultSymtoepl2(c []float32, lResp int, x, y []float32, n int) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celp.rs#L312-L334
+	if celpNeonAvail {
+		neonMultSymtoepl2(c, lResp, x, y, n)
+		return
+	}
 	length := lResp
 	nn := 0
 	for nn < lResp-1 {
@@ -214,6 +218,10 @@ func celpFiltAr16(x []float32, n int, coef []float32, yBase int, y []float32) {
 // celpFiltMa: MA filter; (coefLen-1) history samples sit before x[xBase]. x != y.
 func celpFiltMa(x []float32, xBase, n int, coef []float32, coefLen int, y []float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celp.rs#L350-L370
+	if celpNeonAvail {
+		neonFiltMa(x, xBase, n, coef, coefLen, y)
+		return
+	}
 	var i int
 	if coef[0] == 1.0 {
 		for k := 0; k < n; k++ {

@@ -239,6 +239,10 @@ func peCalcE1(e1, ltpbuf []float32, ltpbufLen, numsubfrs, minpitch, maxpitch, la
 
 // peCalcCE2 is smpl_pitch_calc_C_E2: stage-1 cross-correlation C + target energy E2.
 func peCalcCE2(c, e2, ltpbuf []float32, ltpbufLen, numsubfrs int) {
+	if celpNeonAvail {
+		neonPeCalcCE2(c, e2, ltpbuf, ltpbufLen, numsubfrs, peLagSubfrlenStage1, peMinpitchStage1, peNumLagsStage1)
+		return
+	}
 	t := ltpbufLen - peLagSubfrlenStage1*numsubfrs
 	for sf := 0; sf < numsubfrs; sf++ {
 		tgt := ltpbuf[t : t+20]
@@ -536,12 +540,17 @@ func SmplPitch(st *PitchEstState, ltpBuf []float32, f2 *[SmplFLen]float32, coded
 					tmp := 0.5 * (sqrtE1[i] + sqrtE2)
 					e[ePtr+block*pePitchblock+i] = 0.5 * tmp * tmp
 				}
-				for i := 0; i < pePitchblock; i++ {
-					if h[hPtr+block*pePitchblock+i] > hThres {
-						lag := peMinpitchLen + block*pePitchblock + i
-						a := ltpBufHp[ltpOff:]
-						b := ltpBufHp[ltpOff-lag:]
-						c[cPtr+block*pePitchblock+i] = 0.5 * peDotProd40(a, b)
+				if celpNeonAvail {
+					neonPeCorr40Row(c, cPtr+block*pePitchblock, h, hPtr+block*pePitchblock,
+						ltpBufHp, ltpOff, peMinpitchLen+block*pePitchblock, pePitchblock, hThres)
+				} else {
+					for i := 0; i < pePitchblock; i++ {
+						if h[hPtr+block*pePitchblock+i] > hThres {
+							lag := peMinpitchLen + block*pePitchblock + i
+							a := ltpBufHp[ltpOff:]
+							b := ltpBufHp[ltpOff-lag:]
+							c[cPtr+block*pePitchblock+i] = 0.5 * peDotProd40(a, b)
+						}
 					}
 				}
 			}
