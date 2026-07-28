@@ -79,6 +79,9 @@ func fftRec(x []cpx, stride, n int, sign float32, out []cpx) {
 // +1 inverse.
 func cfft(input, out []cpx, sign float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_perc.rs#L408-L412
+	if neonCfft(input, out, sign) { // NEON kernel on arm+cgo, pure-Go fallback elsewhere
+		return
+	}
 	fftRec(input, 1, len(input), sign, out)
 }
 

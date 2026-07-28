@@ -7,6 +7,15 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/fft — `implemented`
+- Optional NEON acceleration of the mixed-radix FFT for `arm && cgo` builds
+  (`fft_neon.c` + cgo bridge), with a pure-Go fallback (`fft_fallback.go`) so
+  every other build is byte-identical and unchanged. `cfft` routes through the C
+  kernel when present. The C is an independent port of `fftRec` compiled
+  `-mfpu=neon -ffast-math`; it is **not** bit-exact (fast-math reorders the FP),
+  validated instead by PESQ over the MLow round-trip (unchanged MOS) and an
+  on-device benchmark (webOS TouchPad ARMv7): the FFT was ~31% of the encode.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
