@@ -1,6 +1,35 @@
 package mlow
 
-import "math"
+import (
+	"math"
+	"sync"
+)
+
+// twiddleCache memoizes the per-length roots of unity W[m] = exp(sign*2*pi*i*m/n), keyed by (n,sign).
+// The FFT twiddles are constants that depend only on (n,sign); the recursive DFT below recomputed
+// math.Cos/math.Sin for every element of every transform, which profiled at ~half of the entire MLow
+// encode time (see the commit message benchmarks). The analysis calls the FFT at a handful of fixed
+// sizes each frame, so after the first frame every angle is a table lookup. The table is indexed by the
+// reduced index m in [0,n): mathematically identical since cos/sin are 2*pi periodic, and numerically
+// cleaner than forming the angle from the float32 k*j product.
+var twiddleCache sync.Map // key uint64 (n<<1 | signbit) -> []cpx of length n
+
+func twiddles(n int, sign float32) []cpx {
+	key := uint64(n) << 1
+	if sign > 0 {
+		key |= 1
+	}
+	if v, ok := twiddleCache.Load(key); ok {
+		return v.([]cpx)
+	}
+	t := make([]cpx, n)
+	for m := 0; m < n; m++ {
+		ang := float64(sign) * 2.0 * math.Pi * float64(m) / float64(n)
+		t[m] = cpx{re: float32(math.Cos(ang)), im: float32(math.Sin(ang))}
+	}
+	twiddleCache.Store(key, t)
+	return t
+}
 
 // cpx is a single-precision complex value.
 //
@@ -46,13 +75,11 @@ func fftRec(x []cpx, stride, n int, sign float32, out []cpx) {
 	}
 	p := smallestFactor(n)
 	if p == n {
+		w := twiddles(n, sign) // W[m] = exp(sign*2pi*i*m/n); index by (k*j) mod n
 		for k := 0; k < n; k++ {
 			var acc cpx
-			angK := sign * 2.0 * smplPI * float32(k) / float32(n)
 			for j := 0; j < n; j++ {
-				ang := angK * float32(j)
-				w := cpx{re: float32(math.Cos(float64(ang))), im: float32(math.Sin(float64(ang)))}
-				acc = acc.add(x[j*stride].mul(w))
+				acc = acc.add(x[j*stride].mul(w[(k*j)%n]))
 			}
 			out[k] = acc
 		}
@@ -63,13 +90,12 @@ func fftRec(x []cpx, stride, n int, sign float32, out []cpx) {
 	for q := 0; q < p; q++ {
 		fftRec(x[q*stride:], stride*p, m, sign, sub[q*m:(q+1)*m])
 	}
+	w := twiddles(n, sign) // twiddle exp(sign*2pi*i*k*q/n) -> index (k*q) mod n
 	for k := 0; k < n; k++ {
 		kmod := k % m
 		var acc cpx
 		for q := 0; q < p; q++ {
-			ang := sign * 2.0 * smplPI * float32(k) * float32(q) / float32(n)
-			tw := cpx{re: float32(math.Cos(float64(ang))), im: float32(math.Sin(float64(ang)))}
-			acc = acc.add(sub[q*m+kmod].mul(tw))
+			acc = acc.add(sub[q*m+kmod].mul(w[(k*q)%n]))
 		}
 		out[k] = acc
 	}
