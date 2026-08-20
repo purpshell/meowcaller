@@ -17,6 +17,8 @@ type participantAudioDecoder interface {
 	Decode([]byte) []float32
 }
 
+type participantAudioDecoderFactory func() (participantAudioDecoder, error)
+
 type decodedParticipantAudio struct {
 	ParticipantID string
 	UserJID       types.JID
@@ -103,7 +105,7 @@ type participantReceiveRegistry struct {
 	transactionID    uint32
 	rosterGeneration uint64
 	hasGroupUpdate   bool
-	decoderFactory   func() participantAudioDecoder
+	decoderFactory   participantAudioDecoderFactory
 	byDeviceID       map[string]*participantAudioReceiver
 	byPID            map[uint32]*participantAudioReceiver
 	bySSRC           map[uint32]*participantAudioReceiver
@@ -126,10 +128,27 @@ func newParticipantReceiveRegistry(
 	decoderFactory func() participantAudioDecoder,
 	opts ...Option,
 ) (*participantReceiveRegistry, error) {
+	var factory participantAudioDecoderFactory
+	if decoderFactory != nil {
+		factory = func() (participantAudioDecoder, error) {
+			return decoderFactory(), nil
+		}
+	}
+	return newParticipantReceiveRegistryWithDecoderFactory(callID, callKey, selfLID, peerLID, factory, opts...)
+}
+
+func newParticipantReceiveRegistryWithDecoderFactory(
+	callID string,
+	callKey []byte,
+	selfLID string,
+	peerLID string,
+	decoderFactory participantAudioDecoderFactory,
+	opts ...Option,
+) (*participantReceiveRegistry, error) {
 	// Source of truth: https://github.com/purpshell/meowcaller/blob/ca4ba64503efeb86c337ee37cb00c4da540c632c/datasheets/group-media-receive.md#L24-L44
 	if decoderFactory == nil {
-		decoderFactory = func() participantAudioDecoder {
-			return mlow.NewMlowDecoder()
+		decoderFactory = func() (participantAudioDecoder, error) {
+			return mlow.NewMlowDecoder(), nil
 		}
 	}
 	r := &participantReceiveRegistry{
@@ -198,12 +217,19 @@ func (r *participantReceiveRegistry) newReceiver(userJID, deviceJID types.JID, p
 	if err != nil {
 		return nil, fmt.Errorf("meowcaller: create participant SRTCP receiver: %w", err)
 	}
+	decoder, err := r.decoderFactory()
+	if err != nil {
+		return nil, fmt.Errorf("meowcaller: create participant audio decoder: %w", err)
+	}
+	if decoder == nil {
+		return nil, fmt.Errorf("meowcaller: participant audio decoder factory returned nil")
+	}
 	return &participantAudioReceiver{
 		userJID: userJID, deviceJID: deviceJID, participantID: participantID,
 		pid: pid, hasPID: hasPID, ssrc: ssrc, streamSSRCs: streamSSRCs,
 		videoSSRC: videoSSRC, appDataSSRC: appDataSSRC,
 		pipe: pipe, videoPipe: videoPipe, appDataPipe: appDataPipe,
-		srtcp: srtcpReceiver, decoder: r.decoderFactory(),
+		srtcp: srtcpReceiver, decoder: decoder,
 	}, nil
 }
 
@@ -482,6 +508,10 @@ func clearParticipantReceiverKeys(receiver *participantAudioReceiver) {
 	receiver.appDataPipe.installSendKeys(srtp.E2eSrtpKeys{})
 	receiver.appDataPipe.installRecvKeys(srtp.E2eSrtpKeys{})
 	receiver.srtcp.installKeys(srtp.E2eSrtpKeys{})
+	if closer, ok := receiver.decoder.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+	receiver.decoder = nil
 }
 
 func (r *participantReceiveRegistry) clear() {
@@ -713,6 +743,11 @@ func (r *participantReceiveRegistry) RekeyFallback(peerLID string) error {
 	receiver, err := r.newReceiver(peerJID.ToNonAD(), peerJID, 0, false)
 	if err != nil {
 		return err
+	}
+	for _, previous := range r.byDeviceID {
+		if previous != receiver {
+			clearParticipantReceiverKeys(previous)
+		}
 	}
 	r.byDeviceID = map[string]*participantAudioReceiver{participantID: receiver}
 	r.bySSRC = map[uint32]*participantAudioReceiver{receiver.ssrc: receiver}

@@ -7,12 +7,14 @@ require (
 	github.com/pion/datachannel v1.6.0
 	github.com/pion/dtls/v3 v3.1.2
 	github.com/pion/logging v0.2.4
-	github.com/pion/opus v0.1.0
+	github.com/pion/opus v0.1.1-0.20260820111044-791a86d38805
 	github.com/pion/sctp v1.9.4
 	github.com/rs/zerolog v1.35.1
 	go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933
 	google.golang.org/protobuf v1.36.11
 )
+
+replace github.com/pion/opus => github.com/TouchDown1/opus v0.1.1-0.20260820203946-39935723e8b9
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
