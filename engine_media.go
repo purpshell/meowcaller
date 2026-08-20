@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/purpshell/meowcaller/diag"
-	"github.com/purpshell/meowcaller/mlow"
 	"github.com/purpshell/meowcaller/relay"
 	"github.com/purpshell/meowcaller/rtp"
 	"github.com/purpshell/meowcaller/srtp"
@@ -36,6 +35,22 @@ const (
 type videoReceiveState struct {
 	assembler   rtp.H264AccessUnitAssembler
 	orientation int
+}
+
+// audioDecoderAdapter adapts the internal audioDecoder (Decode -> []float32, error)
+// to the group-media participantAudioDecoder (Decode -> []float32, no error).
+type audioDecoderAdapter struct {
+	audioDecoder
+	log zerolog.Logger
+}
+
+func (a *audioDecoderAdapter) Decode(payload []byte) []float32 {
+	pcm, err := a.audioDecoder.Decode(payload)
+	if err != nil {
+		a.log.Debug().Err(err).Msg("audio decode failed")
+		return nil
+	}
+	return pcm
 }
 
 // maybeStartMedia launches the media loop for callID once both the callKey and the relay
@@ -258,24 +273,46 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		"participant_id": selfParticipantID,
 	})
 
-	enc := mlow.NewMlowEncoder(mlow.WithLogger(log))
 	e.mu.Lock()
 	m := e.calls[callID]
 	audioReceivers := (*participantReceiveRegistry)(nil)
 	var groupMode atomic.Bool
+	codec := AudioCodecMlow
 	if m != nil {
 		audioReceivers = m.groupReceivers
 		groupMode.Store(m.group)
+		codec = m.codec
 	}
 	e.mu.Unlock()
+	log.Info().
+		Str("codec", codec.String()).
+		Uint8("payload_type", rtp.RtpPayloadTypeOpus).
+		Int("sample_rate", SampleRate).
+		Int("frame_samples", FrameSamples).
+		Msg("audio codec activated")
+
+	enc, err := buildEncoder(codec, log)
+	if err != nil {
+		return fmt.Errorf("build audio encoder (%s): %w", codec, err)
+	}
+	defer enc.Close()
+
 	if audioReceivers == nil {
-		audioReceivers, err = newParticipantReceiveRegistry(
+		decFactory, err := buildDecoder(codec, log)
+		if err != nil {
+			return fmt.Errorf("build audio decoder (%s): %w", codec, err)
+		}
+		audioReceivers, err = newParticipantReceiveRegistryWithDecoderFactory(
 			callID,
 			callKey,
 			selfLID,
 			peerLID,
-			func() participantAudioDecoder {
-				return mlow.NewMlowDecoder(mlow.WithLogger(log))
+			func() (participantAudioDecoder, error) {
+				dec, err := decFactory()
+				if err != nil {
+					return nil, err
+				}
+				return &audioDecoderAdapter{audioDecoder: dec, log: log}, nil
 			},
 			WithLogger(log),
 		)
@@ -593,7 +630,11 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 				return
 			}
 			if txCount++; txCount == 1 {
-				log.Info().Int("bytes", len(packet)).Msg("first RTP sent to relay, outbound media flowing")
+				log.Info().
+					Str("codec", codec.String()).
+					Uint8("payload_type", rtp.RtpPayloadTypeOpus).
+					Int("bytes", len(packet)).
+					Msg("first RTP sent to relay, outbound media flowing")
 				e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_sent", "call_id": callID, "bytes": len(packet)})
 			}
 		}
@@ -1123,7 +1164,10 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			audioPlayoutMu.Unlock()
 		}
 		if rtpIn++; rtpIn == 1 {
-			log.Info().Msg("first RTP decoded from relay, inbound audio flowing")
+			log.Info().
+				Str("codec", codec.String()).
+				Uint8("payload_type", vh.PayloadType).
+				Msg("first RTP decoded from relay, inbound audio flowing")
 			e.c.diag.Emit("meta", map[string]any{"event": "first_rtp_in", "call_id": callID})
 			if call != nil {
 				call.setPhase(CallPhaseActive)
