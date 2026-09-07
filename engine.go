@@ -76,6 +76,15 @@ type engineCall struct {
 
 	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
 	acceptPending bool
+	// acceptSent flips once the <accept> is actually on the wire. Video-state
+	// stanzas sent before it are a sequence no real client produces, and phones
+	// react badly (observed: the caller's microphone goes silent while their
+	// camera keeps streaming). pendingVideoEnable and pendingVideoOrientation
+	// hold toggles that arrived early; they are applied right after the accept
+	// goes out.
+	acceptSent              bool
+	pendingVideoEnable      *bool
+	pendingVideoOrientation *int
 }
 
 // newEngine creates the engine for a Client.
@@ -346,6 +355,16 @@ func (e *engine) setVideoEnabled(callID string, enabled bool) error {
 		e.mu.Unlock()
 		return errors.New("meowcaller: call is not active")
 	}
+	// On an incoming 1:1 call the <accept> is deferred until the caller's
+	// mute_v2; a video-state stanza racing ahead of it is out-of-sequence for
+	// the peer. Park the request and let sendAccept apply it.
+	if !m.group && m.direction == CallDirectionIncoming && !m.acceptSent {
+		v := enabled
+		m.pendingVideoEnable = &v
+		e.mu.Unlock()
+		e.c.log.Info().Str("call_id", callID).Bool("enabled", enabled).Msg("video enable deferred until accept is sent")
+		return nil
+	}
 	m.localVideo = enabled
 	m.videoGate = false
 	to, creator, sender := m.from, m.creator, m.videoTx
@@ -388,12 +407,31 @@ func (e *engine) setVideoOrientation(callID string, orientation int) error {
 	}
 	e.mu.Lock()
 	m := e.calls[callID]
-	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded || !m.localVideo {
+	if m == nil || m.call == nil || m.call.State() == CallPhaseEnded {
 		e.mu.Unlock()
 		return errors.New("meowcaller: call has no active video media")
 	}
-	to, creator := m.from, m.creator
+	// Same deferral as the camera toggle: while the accept (and any parked
+	// enable) hasn't gone out, hold the orientation and let sendAccept apply
+	// it in order.
+	if !m.group && m.direction == CallDirectionIncoming && !m.acceptSent {
+		v := orientation
+		m.pendingVideoOrientation = &v
+		e.mu.Unlock()
+		e.c.log.Info().Str("call_id", callID).Int("orientation", orientation).Msg("video orientation deferred until accept is sent")
+		return nil
+	}
+	if !m.localVideo {
+		e.mu.Unlock()
+		return errors.New("meowcaller: call has no active video media")
+	}
+	to, creator, sender := m.from, m.creator, m.videoTx
 	e.mu.Unlock()
+	// The stanza announces the rotation, but receivers render by the in-band
+	// CVO bits on each packet — both must carry the same value.
+	if sender != nil {
+		sender.setOrientation(orientation)
+	}
 	node := signaling.BuildVideoStateWithParams(signaling.VideoStateParams{
 		CallID: callID, To: to, CallCreator: creator, WrapperID: e.nextCallNodeID(),
 		State: signaling.VideoStateEnabled, DeviceOrientation: &orientation,
@@ -526,6 +564,19 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 	if oag.OptionalString("is_call_ended") == "1" || oag.OptionalString("terminate_reason") != "" {
 		e.c.log.Warn().Str("call_id", ev.CallID).Msg("ignoring already-ended offer; not a live call")
 		return
+	}
+
+	// Offline replay: on reconnect the server re-delivers call stanzas queued
+	// while we were away, including offers minutes old whose terminate is right
+	// behind them in the same backlog. The wrapper's `e` attribute is the
+	// server-computed elapsed seconds (0 on live delivery), so it is immune to
+	// local clock skew. Anything older than the caller's own 90s ring timeout
+	// cannot be answered — ringing it just races the queued terminate.
+	if raw := oag.OptionalString("e"); raw != "" {
+		if elapsed, err := strconv.Atoi(raw); err == nil && elapsed > 90 {
+			e.c.log.Warn().Str("call_id", ev.CallID).Int("elapsed_s", elapsed).Msg("ignoring stale offer replayed from the offline queue")
+			return
+		}
 	}
 
 	callKey, err := decryptInboundCallKey(context.Background(), e.c.wa, ev)
@@ -715,6 +766,29 @@ func (e *engine) sendAccept(callID string, to, creator types.JID) {
 		return
 	}
 	e.c.log.Info().Str("call_id", callID).Bool("video", isVideo).Msg("accepted (after mute_v2)")
+
+	// The accept is on the wire; release any camera toggle that arrived early.
+	e.mu.Lock()
+	var pending *bool
+	var pendingOrientation *int
+	if current := e.calls[callID]; current == m {
+		current.acceptSent = true
+		pending = current.pendingVideoEnable
+		current.pendingVideoEnable = nil
+		pendingOrientation = current.pendingVideoOrientation
+		current.pendingVideoOrientation = nil
+	}
+	e.mu.Unlock()
+	if pending != nil {
+		if err := e.setVideoEnabled(callID, *pending); err != nil {
+			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("deferred video enable failed")
+		}
+	}
+	if pendingOrientation != nil {
+		if err := e.setVideoOrientation(callID, *pendingOrientation); err != nil {
+			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("deferred video orientation failed")
+		}
+	}
 }
 
 // reject declines an inbound call.
@@ -797,6 +871,22 @@ func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 	if rl == nil {
 		return
 	}
+	// Only endorse relays we can actually receive on. The caller's probes
+	// routinely include its own nearest edge, which is absent from the offer
+	// and holds no tokens for us; echoing that entry back tells the caller both
+	// sides reach it, the election picks it, and the caller's media moves to a
+	// relay we were never connected to.
+	e.mu.Lock()
+	offered := map[string]bool{}
+	if m.relay != nil {
+		for i := range m.relay.endpoints {
+			if name := m.relay.endpoints[i].relayName; name != "" {
+				offered[name] = true
+			}
+		}
+	}
+	e.mu.Unlock()
+
 	var probes []rlProbe
 	for i := range rl.GetChildren() {
 		te := &rl.GetChildren()[i]
@@ -804,9 +894,14 @@ func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 			continue
 		}
 		ag := te.AttrGetter()
+		name := ag.String("relay_name")
+		if len(offered) > 0 && !offered[name] {
+			e.c.log.Debug().Str("call_id", ev.CallID).Str("relay_name", name).Msg("skipping latency response for relay outside the offer")
+			continue
+		}
 		probes = append(probes, rlProbe{
 			latency:   decodeLatency(ag.String("latency")),
-			relayName: ag.String("relay_name"),
+			relayName: name,
 			addr:      nodeBytes(te),
 		})
 	}
