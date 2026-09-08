@@ -184,7 +184,10 @@ func percRc2a(rc []float32, order int, a []float32) {
 // rfftBackwardOrdered: inverse real FFT from the ordered REAL layout, unnormalized.
 func rfftBackwardOrdered(f []float32, time []float32) {
 	n := len(f)
-	spec := make([]cpx, n)
+	s := getFFTScratch(n)
+	spec := s.a
+	// The loop below writes every index 0..n-1 (0, n/2, 1..n/2-1, and their
+	// conjugate mirrors n/2+1..n-1), so the pooled buffer needs no pre-clear.
 	spec[0] = cpx{f[0], 0}
 	spec[n/2] = cpx{f[1], 0}
 	for i := 1; i < n/2; i++ {
@@ -193,11 +196,12 @@ func rfftBackwardOrdered(f []float32, time []float32) {
 		spec[i] = cpx{re, im}
 		spec[n-i] = cpx{re, -im}
 	}
-	tout := make([]cpx, n)
-	cfft(spec, tout, 1.0)
+	tout := s.b
+	fftRec(spec, 1, n, 1.0, tout, s.rec)
 	for i := 0; i < n; i++ {
 		time[i] = tout[i].re
 	}
+	putFFTScratch(s)
 }
 
 // --- perceptual model (smpl_perc_wght.c) -----------------------------------
