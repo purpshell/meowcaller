@@ -425,10 +425,6 @@ func (e *engine) joinPublicCallLink(
 		WaitingRoomEnabled: joined.WaitingRoomEnabled,
 		InWaitingRoom:      joined.InWaitingRoom, IsAdmin: joined.IsAdmin,
 	}
-	if joined.Group != nil {
-		update := groupCallUpdateFromSignaling(*joined.Group)
-		result.Group = &update
-	}
 	phase := CallPhaseConnecting
 	if result.InWaitingRoom {
 		phase = CallPhaseWaitingRoom
@@ -453,9 +449,8 @@ func (e *engine) joinPublicCallLink(
 		Capability: append([]byte(nil), signaling.CapabilityOffer...),
 	}
 	e.mu.Unlock()
-	if result.Group != nil {
-		e.applyGroupUpdate(*result.Group)
-	}
+	// Unlike the reference, defer roster installation to group_update, which can reuse the
+	// ACK's transaction ID.
 	if result.InWaitingRoom {
 		e.startWaitingRoomHeartbeat(result.CallID)
 	}

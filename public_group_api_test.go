@@ -186,6 +186,15 @@ func TestCallLinkTokenNormalizationAndPublicURL(t *testing.T) {
 	if link.URL != "https://call.whatsapp.com/video/TOKEN" || !link.Video {
 		t.Fatalf("public link = %#v", link)
 	}
+	link = publicCallLink(token, callLinkMediaAudio)
+	if link.URL != "https://call.whatsapp.com/voice/TOKEN" || link.Video {
+		t.Fatalf("public audio link = %#v", link)
+	}
+	for _, raw := range []string{"https://call.whatsapp.com/voice/TOKEN", "https://call.whatsapp.com/audio/TOKEN"} {
+		if token, err = normalizeCallLinkToken(raw); err != nil || token != "TOKEN" {
+			t.Fatalf("normalize %q = (%q, %v)", raw, token, err)
+		}
+	}
 	for _, invalid := range []string{"", "audio/TOKEN", "http://call.whatsapp.com/audio/TOKEN"} {
 		if _, err = normalizeCallLinkToken(invalid); err == nil {
 			t.Fatalf("accepted invalid call link %q", invalid)
