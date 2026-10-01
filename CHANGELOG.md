@@ -36,6 +36,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   `rekey="1"`, and device PIDs. The regression test
   `TestCallLinkJoinInstallsFollowingGroupUpdate` passes, and a live call-link
   join from an iPhone started media and decoded inbound audio.
+- Audio call links now use the `/voice/` path WhatsApp serves:
+  `CreateCallLink` returns `/voice/` URLs, and `JoinCallLink`/`PreviewCallLink`
+  accept them. `https://call.whatsapp.com/audio/<token>` returns 404, but
+  `/audio/` input is still accepted. Callers that compare audio
+  `CallLink.URL` strings will see the new path.
+  `TestCallLinkTokenNormalizationAndPublicURL` covers both paths.
 
 ### media/group_rtcp_feedback — `partial`
 - Corrected the wire contract from authenticated group traffic. Native
