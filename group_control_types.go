@@ -105,7 +105,6 @@ type callLinkJoinResult struct {
 	WaitingRoomEnabled bool
 	InWaitingRoom      bool
 	IsAdmin            bool
-	Group              *groupCallUpdate
 }
 
 func groupCallUpdateFromSignaling(update signaling.GroupCallUpdate) groupCallUpdate {
