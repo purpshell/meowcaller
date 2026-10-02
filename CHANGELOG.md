@@ -7,6 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — inbound relay pick when the offer has no `is_fna` endpoint
+- `getMediaRelayEndpoint(rd, inbound=true)` used to fall through to our own outbound
+  relay (`auth_token_id≠0`) when no `<te2>` carried `is_fna="1"`. The caller's uplink
+  never reaches that relay, so the call connected with no inbound audio (#40). It now
+  picks the peer-side relay (`auth_token_id=0`) with the lowest `c2r_rtt`, parsed into
+  the new `relayEndpoint.c2rRTT`; with no measured peer relay the old fallback is kept.
+  FNA endpoints still win. Unit tests: `TestInboundRelayWithoutFNAPicksLowestRTTPeerRelay`,
+  `TestInboundRelayPrefersFNA`, `TestInboundRelayWithoutRTTFallsBackToOwnRelay`.
+  Not live-validated as the cure for #40: in our setup the offers also lacked
+  `is_fna`, but the inbound-audio loss there was the late-answer allocation (separate
+  change), so this pick is the fix proposed in the issue, covered by unit tests only.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
