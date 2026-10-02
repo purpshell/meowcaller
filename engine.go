@@ -1505,6 +1505,7 @@ type relayEndpoint struct {
 	tokenID     uint32
 	authTokenID uint32
 	isFNA       bool
+	c2rRTT      uint32
 	addresses   []relayAddress
 }
 
@@ -1644,6 +1645,7 @@ func parseRelayData(node *waBinary.Node) *relayData {
 			tokenID:     attrUint(child, "token_id"),
 			authTokenID: attrUint(child, "auth_token_id"),
 			isFNA:       child.AttrGetter().String("is_fna") == "1",
+			c2rRTT:      attrUint(child, "c2r_rtt"),
 			addresses: []relayAddress{{
 				ipv4: fmt.Sprintf("%d.%d.%d.%d", ab[0], ab[1], ab[2], ab[3]),
 				port: binary.BigEndian.Uint16(ab[4:6]),
@@ -1657,13 +1659,28 @@ func parseRelayData(node *waBinary.Node) *relayData {
 // getMediaRelayEndpoint prefers an outbound (non-FNA, auth_token_id≠0) endpoint, else
 // any non-FNA, else the first. For an inbound call the caller's uplink RTP lands on their
 // FNA-marked relay, so we must allocate on that same relay or the relay never bridges the
-// peer's media (the callee connects but hears nothing).
+// peer's media (the callee connects but hears nothing). When the offer marks no FNA
+// endpoint, the caller's relay is the peer-side one (auth_token_id=0) with the lowest
+// c2r_rtt.
 func getMediaRelayEndpoint(rd *relayData, inbound bool) *relayEndpoint {
 	if inbound {
 		for i := range rd.endpoints {
 			if e := &rd.endpoints[i]; e.isFNA {
 				return e
 			}
+		}
+		var best *relayEndpoint
+		for i := range rd.endpoints {
+			e := &rd.endpoints[i]
+			if e.authTokenID != 0 || e.c2rRTT == 0 {
+				continue
+			}
+			if best == nil || e.c2rRTT < best.c2rRTT {
+				best = e
+			}
+		}
+		if best != nil {
+			return best
 		}
 	}
 	for i := range rd.endpoints {
