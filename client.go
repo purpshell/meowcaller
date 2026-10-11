@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 
@@ -23,6 +24,8 @@ type Client struct {
 	log  zerolog.Logger
 	diag *diag.Recorder
 	eng  *engine
+
+	mediaPacketConn func(relayAddr *net.UDPAddr) (net.PacketConn, error)
 
 	getGroupInfo func(context.Context, types.JID) (*types.GroupInfo, error)
 	ownGroupJIDs func() []types.JID
@@ -53,7 +56,8 @@ func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
 	c := &Client{
 		wa: wa, log: cfg.log, diag: cfg.diag,
-		getGroupInfo: wa.GetGroupInfo,
+		mediaPacketConn: cfg.mediaPacketConn,
+		getGroupInfo:    wa.GetGroupInfo,
 		ownGroupJIDs: func() []types.JID {
 			return []types.JID{wa.Store.GetJID(), wa.Store.GetLID()}
 		},

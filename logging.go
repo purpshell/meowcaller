@@ -1,6 +1,8 @@
 package meowcaller
 
 import (
+	"net"
+
 	"github.com/purpshell/meowcaller/diag"
 	"github.com/rs/zerolog"
 )
@@ -12,6 +14,8 @@ type Option func(*config)
 type config struct {
 	log  zerolog.Logger
 	diag *diag.Recorder
+
+	mediaPacketConn func(relayAddr *net.UDPAddr) (net.PacketConn, error)
 }
 
 func resolveConfig(opts []Option) config {
@@ -36,4 +40,11 @@ func WithLogger(l zerolog.Logger) Option {
 // diag emit is a no-op at zero cost.
 func WithDiagnostics(rec *diag.Recorder) Option {
 	return func(c *config) { c.diag = rec }
+}
+
+// WithMediaPacketConn makes every relay media connection run over the datagram
+// socket fn returns instead of a plain host UDP socket, so media can leave through
+// the same exit as signalling (a SOCKS5 UDP association).
+func WithMediaPacketConn(fn func(relayAddr *net.UDPAddr) (net.PacketConn, error)) Option {
+	return func(c *config) { c.mediaPacketConn = fn }
 }

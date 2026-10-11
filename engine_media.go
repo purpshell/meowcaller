@@ -130,7 +130,7 @@ func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSs
 	}
 	done := make(chan result, 1)
 	go func() {
-		ch, err := relay.ConnectRelayMedia(addr, relay.WithLogger(log))
+		ch, err := relay.ConnectRelayMedia(addr, relay.WithLogger(log), relay.WithPacketConn(e.c.mediaPacketConn))
 		done <- result{ch, err}
 	}()
 	var ch *relay.RelayMediaChannel

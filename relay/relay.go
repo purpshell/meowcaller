@@ -143,7 +143,13 @@ func ConnectRelayMedia(relayAddr *net.UDPAddr, opts ...Option) (*RelayMediaChann
 	}
 
 	// 1. UDP socket.
-	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	var udp net.PacketConn
+	var err error
+	if cfg.packetConn != nil {
+		udp, err = cfg.packetConn(relayAddr)
+	} else {
+		udp, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	}
 	if err != nil {
 		lg.Debug().Err(err).Msg("relay media connect failed")
 		return nil, &CallTransportError{Op: "connect", Err: fmt.Errorf("bind udp: %w", err)}
