@@ -803,13 +803,35 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		}
 	}()
 
+	// Inbound audio and video go through the reorder stage before the loop sees them.
+	var observeAudio func(ssrc uint32, seq uint16, timestamp uint32)
+	if fn := e.c.audioRTP; fn != nil {
+		observeAudio = func(ssrc uint32, seq uint16, timestamp uint32) { fn(callID, ssrc, seq, timestamp) }
+	}
+	rx := newReorderingReceiver(ctx, ch.Recv, e.c.reorderWindow, observeAudio)
+	defer func() {
+		report := rx.Report()
+		log.Info().Uint64("packets", report.Packets).Uint64("reordered", report.Reordered).
+			Uint64("recovered", report.Recovered).Uint64("skipped", report.Skipped).Uint64("late", report.Late).
+			Dur("max_hold", report.MaxHold).Dur("window", e.c.reorderWindow).Msg("inbound audio reorder summary")
+		video := rx.VideoReport()
+		if video.Packets > 0 {
+			log.Info().Uint64("packets", video.Packets).Uint64("reordered", video.Reordered).
+				Uint64("recovered", video.Recovered).Uint64("skipped", video.Skipped).Uint64("late", video.Late).
+				Dur("max_hold", video.MaxHold).Msg("inbound video reorder summary")
+		}
+		if fn := e.c.reorderReport; fn != nil {
+			fn(callID, report, video)
+		}
+	}()
+
 	buf := make([]byte, 1500)
 	var rtpIn, rtpSeen, unprotectFail, rtpInspect, vidIn, appDataIn, appDataUnprotectFail, videoUnprotectFail, videoFrameIn, videoSinkMissing, rtcpIn, rtcpAuthFail, groupForwardingInvalid uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		n, err := ch.Recv(buf)
+		n, err := rx.Recv(buf)
 		if err != nil {
 			return fmt.Errorf("relay recv: %w", err)
 		}
