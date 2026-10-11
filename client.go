@@ -24,6 +24,8 @@ type Client struct {
 	diag *diag.Recorder
 	eng  *engine
 
+	offerGate func(Offer) bool
+
 	getGroupInfo func(context.Context, types.JID) (*types.GroupInfo, error)
 	ownGroupJIDs func() []types.JID
 
@@ -53,6 +55,7 @@ func NewClient(wa *whatsmeow.Client, opts ...Option) *Client {
 	cfg := resolveConfig(opts)
 	c := &Client{
 		wa: wa, log: cfg.log, diag: cfg.diag,
+		offerGate:    cfg.offerGate,
 		getGroupInfo: wa.GetGroupInfo,
 		ownGroupJIDs: func() []types.JID {
 			return []types.JID{wa.Store.GetJID(), wa.Store.GetLID()}
@@ -208,6 +211,15 @@ func remoteGroupCallTargets(
 		targets = append(targets, target.String())
 	}
 	return targets
+}
+
+// HookError reports whether the library could install its handlers into the wrapped
+// whatsmeow client. It reaches an unexported part of whatsmeow, so a whatsmeow
+// update can break it: when the error is not nil, inbound offers still arrive as
+// whatsmeow events but outbound calls and relay allocation do not work, and a
+// caller should treat calls as unavailable.
+func (c *Client) HookError() error {
+	return c.eng.requireRawCallAdapter()
 }
 
 // OnIncomingCall registers the listener fired for each inbound call offer. The handler

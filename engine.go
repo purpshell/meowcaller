@@ -514,6 +514,18 @@ func (e *engine) onOffer(ev *events.CallOffer) {
 		e.c.log.Warn().Err(groupErr).Str("call_id", ev.CallID).Msg("parse inbound group offer failed")
 		return
 	}
+	// The gate runs before anything is decrypted or sent: a refused offer leaves this
+	// device exactly as silent as a whatsmeow client without a call stack.
+	if gate := e.c.offerGate; gate != nil {
+		offer := Offer{
+			CallID: ev.CallID, From: ev.From, Creator: ev.CallCreator,
+			Group: isGroup, Video: signaling.OfferHasVideo(ev.Data),
+		}
+		if !gate(offer) {
+			e.c.log.Debug().Str("call_id", ev.CallID).Msg("offer refused by the offer gate; not engaging")
+			return
+		}
+	}
 	if isGroup {
 		e.onGroupOffer(ev, groupCallUpdateFromSignaling(*groupSnapshot))
 		return
