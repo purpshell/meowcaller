@@ -964,6 +964,17 @@ func (e *engine) onReject(ev *events.CallReject) {
 	if m == nil {
 		return
 	}
+	// On an inbound call a <reject> comes from another device of this same account
+	// declining for itself (seen live with reason="unavailable"). The call goes on
+	// for the devices that did not decline: the caller keeps sending <transport> and
+	// ends it with <terminate>, which is what tears an inbound call down.
+	if m.direction == CallDirectionIncoming {
+		e.c.log.Info().
+			Str("call_id", ev.CallID).
+			Str("from", ev.From.String()).
+			Msg("another device of this account declined the inbound call; it stays live here")
+		return
+	}
 	e.c.log.Info().
 		Str("call_id", ev.CallID).
 		Str("from", ev.From.String()).
