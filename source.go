@@ -1,6 +1,7 @@
 package meowcaller
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -8,8 +9,8 @@ import (
 	"os"
 
 	gomp3 "github.com/hajimehoshi/go-mp3"
-	"github.com/pion/opus"
-	"github.com/pion/opus/pkg/oggreader"
+	opus "github.com/skrashevich/go-opus"
+	"github.com/skrashevich/go-opus/pkg/oggreader"
 )
 
 // frameSource turns a stream of decoded 16 kHz mono float32 samples (pushed in
@@ -316,7 +317,8 @@ func OpusFile(path string) (AudioSource, error) {
 			if err != nil {
 				return false, err
 			}
-			if len(packet) == 0 {
+			// Source of truth: https://www.rfc-editor.org/rfc/rfc7845.html#section-3
+			if len(packet) == 0 || bytes.HasPrefix(packet, []byte("OpusTags")) {
 				continue
 			}
 			n, derr := dec.DecodeToFloat32(packet, out)

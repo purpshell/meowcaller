@@ -41,6 +41,10 @@ call, _ := client.Call(ctx, "+15551234567")
 call.Receive(meowcaller.SinkFunc(func(pcm []float32) { /* the peer's audio */ }))
 ```
 
+## Requirements
+
+Go 1.26.1 or newer. Ogg/Opus file decoding uses [go-opus](https://github.com/skrashevich/go-opus) and does not require a system libopus installation.
+
 ## Features
 
 Core VoIP features are present:

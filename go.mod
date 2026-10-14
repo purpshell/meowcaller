@@ -1,16 +1,16 @@
 module github.com/purpshell/meowcaller
 
-go 1.25.0
+go 1.26.1
 
 require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/pion/datachannel v1.6.0
 	github.com/pion/dtls/v3 v3.1.2
 	github.com/pion/logging v0.2.4
-	github.com/pion/opus v0.1.0
 	github.com/pion/sctp v1.9.4
 	github.com/polymorfa/hypermeow v0.0.0-20260906031440-90f9e4ec2c88
 	github.com/rs/zerolog v1.35.1
+	github.com/skrashevich/go-opus v0.1.1
 	google.golang.org/protobuf v1.36.11
 )
 

@@ -7,6 +7,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### audio/source — `implemented`
+
+- Skip the Ogg Opus comment header before decoding audio packets; cover
+  decoding, 60 ms framing, EOF and repeated Close with a generated tone fixture.
+- Use go-opus v0.1.1 directly for Ogg/Opus file decoding and require Go 1.26.1
+  or newer in the library and example modules.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
