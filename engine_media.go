@@ -93,6 +93,27 @@ func (e *engine) maybeStartMedia(callID string) {
 	}
 	selfLID, peerLID := m.selfLID, m.peerLID
 	inbound := m.direction == CallDirectionIncoming
+	if !inbound && !m.group && m.electedRelay == "" {
+		// Outbound: the callee's relaylatency probes are answered toward this relay.
+		if ep := getMediaRelayEndpoint(rd, false); ep != nil {
+			m.electedRelay = ep.relayName
+		}
+	}
+	if inbound && !m.group {
+		// No relaylatency probes before Answer: settle the relay now (is_fna, else the
+		// offered relay with the lowest c2r_rtt) so later probes are steered to it too.
+		if m.electedRelay == "" {
+			m.electedRelay = steerInboundRelay(rd, nil)
+		}
+		if m.electedRelay == "" {
+			if ep := getMediaRelayEndpoint(rd, true); ep != nil {
+				m.electedRelay = ep.relayName
+			}
+		}
+		withElected := *rd
+		withElected.electedRelay = m.electedRelay
+		rd = &withElected
+	}
 	e.mu.Unlock()
 
 	if call != nil {
@@ -113,6 +134,11 @@ func (e *engine) maybeStartMedia(callID string) {
 // NOT VALIDATED: live-relay only.
 func (e *engine) connectAndAllocate(ctx context.Context, rd *relayData, streamSsrcs [9]uint32, inbound bool) (*relay.RelayMediaChannel, []byte, error) {
 	log := e.c.log
+	for _, cand := range rd.endpoints {
+		log.Debug().Str("relay_name", cand.relayName).Uint32("token_id", cand.tokenID).Uint32("auth_token_id", cand.authTokenID).
+			Bool("is_fna", cand.isFNA).Uint32("c2r_rtt", cand.c2rRTT).Bool("inbound", inbound).Str("elected_relay", rd.electedRelay).
+			Msg("relay candidate")
+	}
 	ep := getMediaRelayEndpoint(rd, inbound)
 	if ep == nil || len(ep.addresses) == 0 {
 		return nil, nil, fmt.Errorf("relay has no usable endpoint")
