@@ -76,6 +76,16 @@ type engineCall struct {
 
 	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
 	acceptPending bool
+	// The caller's first <mute_v2> already arrived (the call was still ringing): a later
+	// Answer sends the deferred <accept> right away instead of waiting for another one.
+	muteSeen    bool
+	muteFrom    types.JID
+	muteCreator types.JID
+
+	// The relay this call's media runs on and the 1:1 relay election is steered to (see
+	// onRelayLatency). Inbound: the offer's is_fna relay, else our offered relay the
+	// caller measured as closest. Outbound: the relay we allocated on at media start.
+	electedRelay string
 }
 
 // newEngine creates the engine for a Client.
@@ -683,10 +693,16 @@ func (e *engine) answer(c *Call) error {
 	}
 	e.mu.Lock()
 	m.acceptPending = true
+	seen, from, creator := m.muteSeen, m.muteFrom, m.muteCreator
 	e.mu.Unlock()
 
 	c.setPhase(CallPhaseConnecting)
 	e.maybeStartMedia(c.id)
+	// Answered after the caller's first <mute_v2> (a person clicked Answer seconds into the
+	// ring): no further mute_v2 will come, so accept now or the caller keeps ringing.
+	if seen {
+		e.sendAccept(c.id, from, creator)
+	}
 	return nil
 }
 
@@ -786,11 +802,12 @@ func (e *engine) onRelay(callID string, data *waBinary.Node) {
 	e.maybeStartMedia(callID)
 }
 
-// onRelayLatency answers the caller's relaylatency probes (the callee's half of the
-// relay election). It does NOT send the accept — that is deferred until <mute_v2>.
+// onRelayLatency answers the peer's relaylatency probes (our half of the 1:1 relay
+// election), inbound and outbound. It does NOT send the accept — that is deferred until
+// <mute_v2>.
 func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 	m := e.lookup(ev.CallID)
-	if m == nil || m.direction != CallDirectionIncoming {
+	if m == nil || m.group {
 		return
 	}
 	rl := findChild(ev.Data, "relaylatency")
@@ -810,12 +827,45 @@ func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 			addr:      nodeBytes(te),
 		})
 	}
+	// Echoing the peer's own numbers claims the peer's local relay is as close to us as to
+	// them, so the election lands on a relay that is often not in our relay block at all
+	// (a caller in Kazakhstan probes its Almaty relay at ~5 ms while we were offered only
+	// Warsaw/Helsinki): the peer's media goes there and ours never meets it — the call
+	// connects and no inbound RTP ever arrives. Outbound the callee does the same with no
+	// answer from us. So steer the election to the relay our media runs on: report it near
+	// and every other relay far.
+	e.mu.Lock()
+	target := ""
+	outbound := false
+	if m := e.calls[ev.CallID]; m != nil {
+		outbound = m.direction != CallDirectionIncoming
+		if m.electedRelay == "" && m.relay != nil && !outbound {
+			target = steerInboundRelay(m.relay, probes)
+			m.electedRelay = target
+		} else {
+			target = m.electedRelay
+		}
+	}
+	e.mu.Unlock()
+	if outbound && target == "" {
+		// Media has not started yet (no relay): nothing to steer to.
+		return
+	}
 	for _, p := range probes {
+		latency := p.latency
+		if target != "" {
+			latency = steeredLatency
+			if p.relayName != target {
+				latency = avoidedLatency
+			}
+		}
+		e.c.log.Debug().Str("call_id", ev.CallID).Str("relay_name", p.relayName).Uint32("peer_latency_ms", p.latency).
+			Uint32("reported_latency_ms", latency).Str("target", target).Msg("relaylatency probe answered")
 		resp := signaling.BuildRelayLatency(&signaling.RelayLatencyParams{
 			CallID:       ev.CallID,
 			To:           ev.From,
 			CallCreator:  ev.CallCreator,
-			LatencyMs:    p.latency,
+			LatencyMs:    latency,
 			RelayName:    p.relayName,
 			AddressBytes: p.addr,
 		})
@@ -825,6 +875,37 @@ func (e *engine) onRelayLatency(ev *events.CallRelayLatency) {
 			return
 		}
 	}
+}
+
+// Latencies we report to steer the 1:1 relay election (see onRelayLatency).
+const (
+	steeredLatency uint32 = 20
+	avoidedLatency uint32 = 1500
+)
+
+// steerInboundRelay picks the relay an inbound call should run on: the offer's is_fna
+// relay, else, among the relays we were offered (and hold tokens for), the one the
+// caller's probes measured closest. Empty when the probes name none of our relays.
+func steerInboundRelay(rd *relayData, probes []rlProbe) string {
+	offered := map[string]bool{}
+	for _, ep := range rd.endpoints {
+		if ep.isFNA {
+			return ep.relayName
+		}
+		if int(ep.tokenID) < len(rd.relayTokens) && len(rd.relayTokens[ep.tokenID]) > 0 {
+			offered[ep.relayName] = true
+		}
+	}
+	best, bestLatency := "", uint32(0)
+	for _, p := range probes {
+		if p.latency == 0 || !offered[p.relayName] {
+			continue
+		}
+		if best == "" || p.latency < bestLatency {
+			best, bestLatency = p.relayName, p.latency
+		}
+	}
+	return best
 }
 
 // onPreAccept records that the peer's device received and started preparing an outgoing call.
@@ -1086,6 +1167,11 @@ func (e *engine) onCallRaw(callNode *waBinary.Node) bool {
 		e.mu.Lock()
 		m := e.calls[callID]
 		pending := m != nil && m.acceptPending
+		if m != nil && !m.muteSeen {
+			m.muteSeen = true
+			m.muteFrom = callNode.AttrGetter().JID("from")
+			m.muteCreator = mv.JID("call-creator")
+		}
 		e.mu.Unlock()
 		if m != nil && m.call != nil {
 			if fn := m.call.onMuteStateFn(); fn != nil {
@@ -1505,6 +1591,7 @@ type relayEndpoint struct {
 	tokenID     uint32
 	authTokenID uint32
 	isFNA       bool
+	c2rRTT      uint32
 	addresses   []relayAddress
 }
 
@@ -1513,6 +1600,8 @@ type relayData struct {
 	relayTokens   [][]byte // indexed <token id=…>
 	endpoints     []relayEndpoint
 	peerJID       types.JID
+	// electedRelay: the relay the election is steered to (engineCall.electedRelay).
+	electedRelay string
 }
 
 func nodeBytes(n *waBinary.Node) []byte {
@@ -1571,12 +1660,14 @@ func findChild(n *waBinary.Node, tag string) *waBinary.Node {
 }
 
 // decodeLatency reverses the relay-latency wire encoding (0x2000000 + rttMs).
+// decodeLatency reads a <te latency>: milliseconds in the low 24 bits under a tag byte
+// (0x02 from WA Web, 0x06 seen from iPhones — 0x0600007F is 127 ms, not 67 million).
 func decodeLatency(enc string) uint32 {
 	v, err := strconv.ParseUint(enc, 10, 32)
-	if err != nil || v < 0x0200_0000 {
+	if err != nil || v < 0x0100_0000 {
 		return 0
 	}
-	return uint32(v) - 0x0200_0000
+	return uint32(v) & 0x00FF_FFFF
 }
 
 func attrUint(n *waBinary.Node, key string) uint32 {
@@ -1644,6 +1735,7 @@ func parseRelayData(node *waBinary.Node) *relayData {
 			tokenID:     attrUint(child, "token_id"),
 			authTokenID: attrUint(child, "auth_token_id"),
 			isFNA:       child.AttrGetter().String("is_fna") == "1",
+			c2rRTT:      attrUint(child, "c2r_rtt"),
 			addresses: []relayAddress{{
 				ipv4: fmt.Sprintf("%d.%d.%d.%d", ab[0], ab[1], ab[2], ab[3]),
 				port: binary.BigEndian.Uint16(ab[4:6]),
@@ -1664,6 +1756,28 @@ func getMediaRelayEndpoint(rd *relayData, inbound bool) *relayEndpoint {
 			if e := &rd.endpoints[i]; e.isFNA {
 				return e
 			}
+		}
+		// No is_fna in the offer. Allocate on the relay the election is steered to (see
+		// onRelayLatency), else the foreign relay (auth_token_id=0) with the lowest c2r_rtt.
+		if rd.electedRelay != "" {
+			for i := range rd.endpoints {
+				if e := &rd.endpoints[i]; e.relayName == rd.electedRelay {
+					return e
+				}
+			}
+		}
+		var best *relayEndpoint
+		for i := range rd.endpoints {
+			e := &rd.endpoints[i]
+			if e.authTokenID != 0 || e.c2rRTT == 0 {
+				continue
+			}
+			if best == nil || e.c2rRTT < best.c2rRTT {
+				best = e
+			}
+		}
+		if best != nil {
+			return best
 		}
 	}
 	for i := range rd.endpoints {
