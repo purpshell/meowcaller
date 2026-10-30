@@ -3,6 +3,7 @@ package meowcaller
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/purpshell/meowcaller/signaling"
@@ -15,6 +16,10 @@ type Call struct {
 	eng  *engine
 	id   string
 	peer types.JID
+
+	// lastInboundAudio: when the peer's last authenticated audio frame was decoded
+	// (Unix nanoseconds, 0 = never). Read by the error-ack guard in onCallAck.
+	lastInboundAudio atomic.Int64
 
 	mu                        sync.Mutex
 	phase                     CallPhase

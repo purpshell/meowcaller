@@ -690,6 +690,40 @@ func (e *engine) answer(c *Call) error {
 	return nil
 }
 
+// acceptErrorAckGrace is how long an answered inbound call kept after an error ack
+// may go without inbound audio before it is ended. Connected peers send audio (or DTX
+// frames, several per second) continuously, so a few seconds is ample.
+var acceptErrorAckGrace = 6 * time.Second
+
+// acceptGoneOut: the inbound call was answered and its <accept> is sent or being sent
+// (answer sets acceptPending, sendAccept clears it right before transmitting).
+func (e *engine) acceptGoneOut(m *engineCall) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !m.acceptPending && m.call != nil && m.call.State() != CallPhaseRinging
+}
+
+// guardAcceptErrorAck ends a call kept after an error ack on its <accept> when no
+// inbound audio has arrived since the ack: the accept did not land after all.
+func (e *engine) guardAcceptErrorAck(callID string, m *engineCall, errCode string, ackAt time.Time) {
+	time.Sleep(acceptErrorAckGrace)
+	if e.lookup(callID) != m {
+		return // already ended (or replaced)
+	}
+	if m.call != nil && audioSince(m.call, ackAt) {
+		e.c.log.Info().Str("call_id", callID).Str("error_code", errCode).Msg("inbound audio after the error ack; the accept landed")
+		return
+	}
+	e.c.log.Warn().Str("call_id", callID).Str("error_code", errCode).Dur("grace", acceptErrorAckGrace).
+		Msg("no inbound audio after the error ack; ending the call")
+	e.finishCall(callID, "server:"+errCode)
+}
+
+// audioSince reports whether the peer's audio was decoded at or after t.
+func audioSince(c *Call, t time.Time) bool {
+	return c.lastInboundAudio.Load() >= t.UnixNano()
+}
+
 // sendAccept sends the deferred callee <accept> (once), in the WA-Web format (metadata +
 // single rate — the peer keeps the call alive with this; capability+both-rates fails).
 func (e *engine) sendAccept(callID string, to, creator types.JID) {
@@ -1012,6 +1046,19 @@ func (e *engine) onCallAck(ack *waBinary.Node) {
 		callID := ""
 		if en := findChild(ack, "error"); en != nil {
 			callID = en.AttrGetter().String("call-id")
+		}
+		// An error ack for the <accept> of an inbound 1:1 call we already answered is not
+		// necessarily the end of the call. Seen live: a Meta-hosted companion of the called
+		// account (<lid user>:99@hosted.lid) rejects the offer first; the server then acks
+		// our <accept> with error 500, yet the caller did receive it — their phone shows
+		// the call connected, then "reconnecting" once we tear media down. Keep the call
+		// while the peer's audio flows; if none arrives within acceptErrorAckGrace, the
+		// accept did not land after all and the call is ended.
+		if m := e.lookup(callID); m != nil && !m.group && m.direction == CallDirectionIncoming && e.acceptGoneOut(m) {
+			e.c.log.Warn().Str("call_id", callID).Str("error_code", errCode).Str("ack_type", ack.AttrGetter().OptionalString("type")).
+				Msg("server error ack after our accept; keeping the answered call while audio flows")
+			go e.guardAcceptErrorAck(callID, m, errCode, time.Now())
+			return
 		}
 		e.c.log.Warn().Str("call_id", callID).Str("error_code", errCode).Msg("call rejected by server")
 		e.finishCall(callID, "server:"+errCode)

@@ -1087,6 +1087,9 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			continue
 		}
 		audioReception.Observe(audio.SSRC, vh.SequenceNumber, audio.Timestamp, uint64(time.Now().UnixMilli()), SampleRate)
+		if call != nil {
+			call.lastInboundAudio.Store(time.Now().UnixNano())
+		}
 		e.c.diag.Emit("rtp", map[string]any{
 			"event": "in", "ssrc": audio.SSRC, "seq": vh.SequenceNumber,
 			"ts": audio.Timestamp, "pt": vh.PayloadType, "marker": vh.Marker,
