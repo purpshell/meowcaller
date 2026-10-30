@@ -7,6 +7,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### engine — keep an answered inbound call through an error ack on its accept — `implemented`
+- `onCallAck` ended the call on any error ack. On an inbound 1:1 call whose `<accept>` is
+  already sent, a Meta-hosted companion of the called account (`…:99@hosted.lid`) rejecting
+  the offer first makes the server ack the accept with `error="500"` — yet the caller gets
+  the accept: their phone connects, then shows "reconnecting" once we tear media down.
+  Such an error ack is now logged and the call kept; if no inbound audio is decoded within
+  `acceptErrorAckGrace` (6 s) of the ack, the accept did not land and the call is ended.
+  Calls still ringing, outbound and group calls keep the previous behavior. Live-validated
+  (inbound from phones answered seconds after the offer, audio both ways).
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
