@@ -9,7 +9,7 @@ require (
 	github.com/pion/logging v0.2.4
 	github.com/pion/opus v0.1.0
 	github.com/pion/sctp v1.9.4
-	github.com/polymorfa/hypermeow v0.0.0-20261110184156-2484e431175b
+	github.com/polymorfa/hypermeow v0.0.0-20261110203528-c77b8e8d10dc
 	github.com/rs/zerolog v1.35.1
 	google.golang.org/protobuf v1.36.12
 )

@@ -48,3 +48,22 @@ func TestNewGuestClientRejectsBlankNameAndBadLink(t *testing.T) {
 		t.Fatal("an empty link must be rejected")
 	}
 }
+
+func TestGuestCloseIsTerminalAndIdempotent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok","lid":"987654321"}`))
+	}))
+	defer server.Close()
+	g, err := NewGuestClient(context.Background(), "TOKEN", GuestOptions{Name: "Ada", Registration: guest.Request{BaseURL: server.URL, HTTPClient: server.Client()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Close()
+	g.Close()
+	if err = g.Connect(); err == nil {
+		t.Fatal("closed guest reconnected")
+	}
+	if call, err := g.JoinCallLink(context.Background(), CallLinkOptions{}); err == nil || call != nil {
+		t.Fatal("closed guest joined")
+	}
+}

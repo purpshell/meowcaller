@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/guest"
@@ -31,8 +32,12 @@ type GuestClient struct {
 	// Registration is the guest identity the server assigned.
 	Registration *guest.Registration
 
-	token string
-	name  string
+	token   string
+	name    string
+	mu      sync.Mutex
+	closed  bool
+	joining bool
+	call    *Call
 }
 
 // NewGuestClient registers a one-time guest identity for one call link and
@@ -78,19 +83,57 @@ func NewGuestClient(
 
 // Connect opens the guest's WhatsApp connection.
 func (g *GuestClient) Connect() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return errors.New("meowcaller: guest client is closed")
+	}
 	return g.WA.Connect()
 }
 
 // JoinCallLink joins the link this guest registered for, showing its
 // registered name. opts.DisplayName defaults to that name.
 func (g *GuestClient) JoinCallLink(ctx context.Context, opts CallLinkOptions) (*Call, error) {
+	g.mu.Lock()
+	if g.closed || g.joining || g.call != nil {
+		g.mu.Unlock()
+		return nil, errors.New("meowcaller: guest is closed or already joined")
+	}
+	g.joining = true
+	g.mu.Unlock()
 	if opts.DisplayName == "" {
 		opts.DisplayName = g.name
 	}
-	return g.Client.JoinCallLink(ctx, g.token, opts)
+	call, err := g.Client.JoinCallLink(ctx, g.token, opts)
+	g.mu.Lock()
+	g.joining = false
+	closed := g.closed
+	if !closed && err == nil {
+		g.call = call
+	}
+	g.mu.Unlock()
+	if closed {
+		if call != nil {
+			_ = call.Hangup()
+		}
+		return nil, errors.New("meowcaller: guest client is closed")
+	}
+	return call, err
 }
 
 // Close disconnects the guest. The identity isn't reusable afterwards.
 func (g *GuestClient) Close() {
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return
+	}
+	g.closed = true
+	call := g.call
+	g.call = nil
+	g.mu.Unlock()
+	if call != nil {
+		_ = call.Hangup()
+	}
 	g.WA.Disconnect()
 }
