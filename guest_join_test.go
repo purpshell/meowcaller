@@ -8,18 +8,8 @@ import (
 
 	"github.com/polymorfa/hypermeow/guest"
 	"github.com/polymorfa/hypermeow/proto/waWa6"
-	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/types"
-	"github.com/polymorfa/hypermeow/util/keys"
 )
-
-func freshGuestDevice() *store.Device {
-	device := &store.Device{
-		NoiseKey: keys.NewKeyPair(), IdentityKey: keys.NewKeyPair(), RegistrationID: 42,
-	}
-	device.SignedPreKey = device.IdentityKey.CreateSignedPreKey(1)
-	return device
-}
 
 func TestNewGuestClientRegistersForTheLink(t *testing.T) {
 	var invite, name string
@@ -29,8 +19,7 @@ func TestNewGuestClientRegistersForTheLink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	device := freshGuestDevice()
-	g, err := NewGuestClient(context.Background(), device, "https://call.whatsapp.com/video/LINKTOKEN",
+	g, err := NewGuestClient(context.Background(), "https://call.whatsapp.com/video/LINKTOKEN",
 		GuestOptions{Name: "Ada", Registration: guest.Request{BaseURL: server.URL, HTTPClient: server.Client()}})
 	if err != nil {
 		t.Fatalf("NewGuestClient: %v", err)
@@ -39,8 +28,8 @@ func TestNewGuestClientRegistersForTheLink(t *testing.T) {
 		t.Fatalf("registered invite=%q name=%q", invite, name)
 	}
 	want := types.NewJID("987654321", types.HiddenUserServer)
-	if g.Registration.LID != want || device.ID == nil || *device.ID != want || g.token != "LINKTOKEN" {
-		t.Fatalf("guest identity = %+v device=%v token=%q", g.Registration, device.ID, g.token)
+	if g.Registration.LID != want || g.WA.Store.ID == nil || *g.WA.Store.ID != want || g.token != "LINKTOKEN" {
+		t.Fatalf("guest identity = %+v device=%v token=%q", g.Registration, g.WA.Store.ID, g.token)
 	}
 	payload := g.WA.GetClientPayload()
 	if payload.GetAccountType() != waWa6.ClientPayload_GUEST || payload.GetUsername() != 987654321 {
@@ -51,14 +40,11 @@ func TestNewGuestClientRegistersForTheLink(t *testing.T) {
 	}
 }
 
-func TestNewGuestClientRejectsPairedDeviceAndBlankName(t *testing.T) {
-	paired := freshGuestDevice()
-	id := types.NewJID("1", types.DefaultUserServer)
-	paired.ID = &id
-	if _, err := NewGuestClient(context.Background(), paired, "TOKEN", GuestOptions{Name: "Ada"}); err == nil {
-		t.Fatal("a paired device must be rejected")
-	}
-	if _, err := NewGuestClient(context.Background(), freshGuestDevice(), "TOKEN", GuestOptions{Name: " "}); err == nil {
+func TestNewGuestClientRejectsBlankNameAndBadLink(t *testing.T) {
+	if _, err := NewGuestClient(context.Background(), "TOKEN", GuestOptions{Name: " "}); err == nil {
 		t.Fatal("a blank name must be rejected")
+	}
+	if _, err := NewGuestClient(context.Background(), "", GuestOptions{Name: "Ada"}); err == nil {
+		t.Fatal("an empty link must be rejected")
 	}
 }

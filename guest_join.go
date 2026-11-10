@@ -8,7 +8,6 @@ import (
 
 	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/guest"
-	"github.com/polymorfa/hypermeow/store"
 	waLog "github.com/polymorfa/hypermeow/util/log"
 )
 
@@ -36,25 +35,18 @@ type GuestClient struct {
 	name  string
 }
 
-// NewGuestClient registers a guest identity for one call link and returns a
-// client that logs in as that guest. device must be fresh and never paired
-// (for example container.NewDevice()); don't reuse it for another link.
+// NewGuestClient registers a one-time guest identity for one call link and
+// returns a client that logs in as that guest. The identity's keys and Signal
+// state live only in memory (hypermeow guest.NewDevice) and are not reusable.
 //
 // Call Connect on the result, then JoinCallLink. A guest can only join the
 // link it registered for.
 func NewGuestClient(
 	ctx context.Context,
-	device *store.Device,
 	tokenOrURL string,
 	opts GuestOptions,
 	clientOpts ...Option,
 ) (*GuestClient, error) {
-	if device == nil {
-		return nil, errors.New("meowcaller: guest device is required")
-	}
-	if device.ID != nil {
-		return nil, errors.New("meowcaller: guest device must not be paired")
-	}
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
 		return nil, errors.New("meowcaller: guest name is required")
@@ -63,19 +55,20 @@ func NewGuestClient(
 	if err != nil {
 		return nil, err
 	}
+	logger := opts.Log
+	if logger == nil {
+		logger = waLog.Noop
+	}
+	device := guest.NewDevice(logger)
 	req := opts.Registration
 	req.InviteCode, req.Name = token, name
 	reg, err := guest.Register(ctx, device, req)
 	if err != nil {
 		return nil, fmt.Errorf("meowcaller: register guest: %w", err)
 	}
-	logger := opts.Log
-	if logger == nil {
-		logger = waLog.Noop
-	}
-	wa := whatsmeow.NewClient(device, logger)
-	if err = guest.Attach(wa, reg); err != nil {
-		return nil, fmt.Errorf("meowcaller: attach guest: %w", err)
+	wa, err := guest.NewClient(device, reg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("meowcaller: guest client: %w", err)
 	}
 	return &GuestClient{
 		Client: NewClient(wa, clientOpts...), WA: wa, Registration: reg,

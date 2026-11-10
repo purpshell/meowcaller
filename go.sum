@@ -38,6 +38,8 @@ github.com/polymorfa/hypermeow v0.0.0-20260906031440-90f9e4ec2c88 h1:HuHIp7gS/ZU
 github.com/polymorfa/hypermeow v0.0.0-20260906031440-90f9e4ec2c88/go.mod h1:PiCnzHA8H+kDlvW7XLoigDWRGRmjfZweN5WH2qiFx+s=
 github.com/polymorfa/hypermeow v0.0.0-20261110170802-9ce69d233614 h1:Eb9wMjbcUgGpoYLyIdL0SPuBKIXDf0vk724Pdk14x6w=
 github.com/polymorfa/hypermeow v0.0.0-20261110170802-9ce69d233614/go.mod h1:EvyTVXMPeTcxWr1fcININB6lXlYcysXftCodhsO72LI=
+github.com/polymorfa/hypermeow v0.0.0-20261110174430-69f59dab677b h1:VaqHGXioZ+VK8KvT7NKHihc4f2iFC6RhEhGJ4bDrjes=
+github.com/polymorfa/hypermeow v0.0.0-20261110174430-69f59dab677b/go.mod h1:EvyTVXMPeTcxWr1fcININB6lXlYcysXftCodhsO72LI=
 github.com/polymorfa/libsignal-protocol-go v0.2.3-0.20260806162910-a2adef2e8a11 h1:ZeZ6sUkmZY+v6ULce+O7cuuzUmvu9d3t5sY2CTrJ2AQ=
 github.com/polymorfa/libsignal-protocol-go v0.2.3-0.20260806162910-a2adef2e8a11/go.mod h1:B5KZPsgswdf1eCvC+PZ7z45g5OECgqy6Zb0o7I5CcNQ=
 github.com/rs/zerolog v1.35.1 h1:m7xQeoiLIiV0BCEY4Hs+j2NG4Gp2o2KPKmhnnLiazKI=

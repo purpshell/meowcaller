@@ -65,8 +65,7 @@ it does not require a fork. See the
 Joining a call link as a guest (no paired account; the identity is one-time):
 
 ```go
-device := container.NewDevice() // fresh, never paired
-g, err := meowcaller.NewGuestClient(ctx, device, "https://call.whatsapp.com/voice/TOKEN",
+g, err := meowcaller.NewGuestClient(ctx, "https://call.whatsapp.com/voice/TOKEN",
     meowcaller.GuestOptions{Name: "Ada"})
 if err != nil {
     return err
