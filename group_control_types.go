@@ -3,8 +3,8 @@ package meowcaller
 import (
 	"bytes"
 
-	"github.com/purpshell/meowcaller/signaling"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 )
 
 // groupCallUpdate is the control-plane-neutral form of one authoritative
@@ -107,7 +107,6 @@ type callLinkJoinResult struct {
 	WaitingRoomEnabled bool
 	InWaitingRoom      bool
 	IsAdmin            bool
-	Group              *groupCallUpdate
 }
 
 func groupCallUpdateFromSignaling(update signaling.GroupCallUpdate) groupCallUpdate {

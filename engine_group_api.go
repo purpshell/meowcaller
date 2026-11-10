@@ -429,10 +429,6 @@ func (e *engine) joinPublicCallLink(
 		WaitingRoomEnabled: joined.WaitingRoomEnabled,
 		InWaitingRoom:      joined.InWaitingRoom, IsAdmin: joined.IsAdmin,
 	}
-	if joined.Group != nil {
-		update := groupCallUpdateFromSignaling(*joined.Group)
-		result.Group = &update
-	}
 	phase := CallPhaseConnecting
 	if result.InWaitingRoom {
 		phase = CallPhaseWaitingRoom
@@ -457,9 +453,8 @@ func (e *engine) joinPublicCallLink(
 		Capability: append([]byte(nil), signaling.CapabilityOffer...),
 	}
 	e.mu.Unlock()
-	if result.Group != nil {
-		e.applyGroupUpdate(*result.Group)
-	}
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/41
+	// Wait for group_update so an ACK roster cannot consume its transaction ID.
 	if result.InWaitingRoom {
 		e.startWaitingRoomHeartbeat(result.CallID)
 	}
