@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/purpshell/meowcaller/signaling"
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 )
 
 func (e *engine) placeGroupCall(
@@ -484,7 +484,7 @@ func (e *engine) setApprovalRequired(ctx context.Context, callID string, enabled
 		return err
 	}
 	node := signaling.BuildWaitingRoomToggle(callID, creator, enabled, e.nextCallNodeID())
-	return e.transmitCallNode(ctx, node)
+	return e.requestWaitingRoomControl(ctx, node)
 }
 
 func (e *engine) controlWaitingParticipant(
@@ -508,7 +508,7 @@ func (e *engine) controlWaitingParticipant(
 	if admit {
 		node = signaling.BuildWaitingRoomAdmit(callID, creator, jid.ToNonAD(), e.nextCallNodeID())
 	}
-	return e.transmitCallNode(ctx, node)
+	return e.requestWaitingRoomControl(ctx, node)
 }
 
 func (e *engine) setHandRaised(callID string, raised bool) error {
