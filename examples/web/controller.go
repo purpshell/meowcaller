@@ -54,6 +54,8 @@ type webGroupCallParticipant struct {
 	PN         string               `json:"pn,omitempty"`
 	State      string               `json:"state"`
 	HandRaised bool                 `json:"hand_raised"`
+	Guest      bool                 `json:"guest"`
+	Name       string               `json:"name,omitempty"`
 	CanRing    bool                 `json:"can_ring"`
 	Devices    []webGroupCallDevice `json:"devices"`
 }
@@ -82,6 +84,8 @@ type webWaitingRoomUser struct {
 	JID   string `json:"jid"`
 	PN    string `json:"pn,omitempty"`
 	State string `json:"state"`
+	Guest bool   `json:"guest"`
+	Name  string `json:"name,omitempty"`
 }
 
 type webParticipantState struct {
@@ -270,6 +274,7 @@ func (c *webCallController) attach(call *meowcaller.Call) error {
 		for i, user := range state.Users {
 			users[i] = webWaitingRoomUser{
 				JID: user.JID.String(), PN: user.PN.String(), State: user.State,
+				Guest: user.Guest, Name: user.Name,
 			}
 		}
 		c.bridge.PublishEvent(webWaitingRoomState{
@@ -960,6 +965,7 @@ func (c *webCallController) handleGroupState(callID string, state meowcaller.Gro
 		webState.Participants[participantIndex] = webGroupCallParticipant{
 			JID: participant.JID.String(), PN: participant.PN.String(),
 			State: participant.State, HandRaised: participant.HandRaised,
+			Guest: participant.Guest, Name: participant.Name,
 			CanRing: participant.State != "" && participant.State != "connected",
 			Devices: devices,
 		}

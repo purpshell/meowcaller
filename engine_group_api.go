@@ -225,6 +225,7 @@ func signalingParticipantsFromUpdate(update groupCallUpdate) []signaling.GroupCa
 		participants[i] = signaling.GroupCallParticipant{
 			JID: participant.JID, PN: participant.PN,
 			State: participant.State, Type: participant.Type,
+			AccountKind: participant.AccountKind, Name: participant.Name,
 			Devices: make([]signaling.GroupCallDevice, len(participant.Devices)),
 		}
 		for j, device := range participant.Devices {
@@ -404,7 +405,10 @@ func (e *engine) joinPublicCallLink(
 	}
 	media := selectedCallLinkMedia(opts)
 	requestID := e.nextCallNodeID()
-	node, err := signaling.BuildCallLinkJoin(token, signaling.CallLinkMedia(media), requestID)
+	node, err := signaling.BuildCallLinkJoinWithOptions(
+		token, signaling.CallLinkMedia(media), requestID,
+		signaling.CallLinkJoinOptions{PushName: opts.DisplayName},
+	)
 	if err != nil {
 		return nil, err
 	}

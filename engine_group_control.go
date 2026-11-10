@@ -76,7 +76,10 @@ func (e *engine) applyWaitingRoomUpdate(room signaling.WaitingRoom) {
 		Users:         make([]WaitingRoomUser, len(room.Users)),
 	}
 	for i, user := range room.Users {
-		state.Users[i] = WaitingRoomUser{JID: user.JID, PN: user.PN, State: user.State}
+		state.Users[i] = WaitingRoomUser{
+			JID: user.JID, PN: user.PN, State: user.State,
+			Guest: user.IsGuest(), Name: user.Name,
+		}
 	}
 	e.mu.Lock()
 	m := e.calls[room.CallID]

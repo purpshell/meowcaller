@@ -62,7 +62,11 @@ type GroupCallParticipant struct {
 	PN         types.JID
 	State      string
 	HandRaised bool
-	Devices    []GroupCallDevice
+	// Guest is true for a call-link participant without a WhatsApp account.
+	Guest bool
+	// Name is the participant's push name, or the name a guest typed.
+	Name    string
+	Devices []GroupCallDevice
 }
 
 // GroupCallDevice is one participant device selected or considered by WhatsApp.
@@ -99,6 +103,10 @@ type WaitingRoomUser struct {
 	JID   types.JID
 	PN    types.JID
 	State string
+	// Guest is true for someone without a WhatsApp account.
+	Guest bool
+	// Name is the user's push name, or the name a guest typed.
+	Name string
 }
 
 // HandRaiseState is one participant's persistent raised/lowered state.
@@ -220,6 +228,7 @@ func groupCallStateFromUpdate(update groupCallUpdate) GroupCallState {
 		}
 		state.Participants[participantIndex] = GroupCallParticipant{
 			JID: participant.JID, PN: participant.PN, State: participant.State,
+			Guest: participant.AccountKind == signaling.AccountKindGuest, Name: participant.Name,
 			Devices: devices,
 		}
 	}

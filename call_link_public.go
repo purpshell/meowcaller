@@ -13,6 +13,9 @@ import (
 // CallLinkOptions selects an audio or video call link.
 type CallLinkOptions struct {
 	Video bool
+	// DisplayName is the name other participants see when joining. A guest
+	// must set it; a paired account may leave it empty to use its profile name.
+	DisplayName string
 }
 
 // CallLink is one reusable public call-link token and URL.
