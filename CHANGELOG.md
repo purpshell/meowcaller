@@ -7,6 +7,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### api/waiting-room-controls — `partial`
+
+- Host waiting-room controls now wait up to five seconds for the matching
+  provider acknowledgement. Provider refusals return an error; a missing or
+  unrelated acknowledgement returns an unknown outcome without automatic retry.
+  Focused and full race tests pass. Native paired-host moderation remains unverified.
+- Audio call links use the shipped `/voice/` URL path, and guest link parsing
+  accepts that path. This composes the URL correction also proposed in PR #41;
+  its separate group-update fix still needs independent integration.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,
