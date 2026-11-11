@@ -7,6 +7,24 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### api/waiting-room-controls — `partial`
+
+- Host waiting-room controls now wait up to five seconds for the matching
+  provider acknowledgement. Provider refusals return an error; a missing or
+  unrelated acknowledgement returns an unknown outcome without automatic retry.
+  Focused and full race tests pass. Native paired-host moderation remains unverified.
+- Audio call links use the shipped `/voice/` URL path, and guest link parsing
+  accepts that path. This composes the URL correction also proposed in PR #41;
+  its separate group-update correction is composed below.
+
+### api/call-link-update-order — `partial`
+
+- Composed the equal-transaction join fix from PR #41. A join ACK no longer
+  installs its partial roster before the following group update can supply
+  device PIDs, relay details and the rekey request. The regression reproduces
+  the lost update on the previous source, and the full race suite passes.
+  Live provider ordering remains unverified.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,

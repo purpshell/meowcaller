@@ -2,12 +2,15 @@ package meowcaller
 
 import (
 	"context"
+	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/store"
+	waLog "github.com/polymorfa/hypermeow/util/log"
 	"testing"
 
-	"github.com/purpshell/meowcaller/signaling"
-	"github.com/rs/zerolog"
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
+	"github.com/rs/zerolog"
 )
 
 func testGroupEngine(callID string) (*engine, *Call, types.JID) {
@@ -286,5 +289,64 @@ func TestInviteDeviceCapabilityCopiesNegotiatedValue(t *testing.T) {
 	raw[0] = 0xff
 	if got.Capability[0] != 1 {
 		t.Fatal("negotiated capability aliases stanza bytes")
+	}
+}
+
+func TestCallLinkJoinInstallsFollowingGroupUpdate(t *testing.T) {
+	// Regression from https://github.com/purpshell/meowcaller/pull/41.
+	// This fixture verifies equal-transaction handling, not live server ordering.
+	wa := whatsmeow.NewClient(&store.Device{}, waLog.Noop)
+	client := &Client{wa: wa, log: zerolog.Nop()}
+	eng := newEngine(client)
+	creator := types.NewJID("100", types.HiddenUserServer)
+	peer := types.NewJID("200", types.HiddenUserServer)
+	groupInfo := func(attrs waBinary.Attrs, device waBinary.Attrs) waBinary.Node {
+		attrs["call-id"], attrs["call-creator"] = "GROUP", creator
+		attrs["transaction-id"], attrs["media"], attrs["connected-limit"] = "7", "audio", "32"
+		return waBinary.Node{
+			Tag: "group_info", Attrs: attrs,
+			Content: []waBinary.Node{{
+				Tag: "user", Attrs: waBinary.Attrs{"jid": peer, "state": "connected"},
+				Content: []waBinary.Node{{Tag: "device", Attrs: device}},
+			}},
+		}
+	}
+	eng.requestCallNode = func(context.Context, waBinary.Node, string) (*waBinary.Node, error) {
+		return &waBinary.Node{
+			Tag:     "ack",
+			Attrs:   waBinary.Attrs{"class": "call", "type": "link_join"},
+			Content: []waBinary.Node{groupInfo(waBinary.Attrs{}, waBinary.Attrs{"jid": peer})},
+		}, nil
+	}
+	call, err := eng.joinPublicCallLink(context.Background(), "TOKEN", CallLinkOptions{})
+	if err != nil {
+		t.Fatalf("join call link: %v", err)
+	}
+	update := waBinary.Node{
+		Tag:   "call",
+		Attrs: waBinary.Attrs{"from": types.NewJID("GROUP", "call")},
+		Content: []waBinary.Node{{
+			Tag:   "group_update",
+			Attrs: waBinary.Attrs{"call-id": "GROUP", "call-creator": creator},
+			Content: []waBinary.Node{
+				groupInfo(waBinary.Attrs{}, waBinary.Attrs{"jid": peer, "pid": "1"}),
+				{
+					Tag:     "relay",
+					Attrs:   waBinary.Attrs{"transaction-id": "4", "uuid": "relay", "participant_uuid": "participant"},
+					Content: []waBinary.Node{{Tag: "key", Content: []byte("relay-key")}},
+				},
+			},
+		}},
+	}
+	eng.onUnknownCallEvent(&update)
+
+	m := eng.calls["GROUP"]
+	if m.groupUpdate == nil || m.groupUpdate.Relay == nil || m.groupUpdate.TransactionID != 7 {
+		t.Fatalf("installed group update = %#v", m.groupUpdate)
+	}
+	state, ok := call.GroupState()
+	if !ok || state.TransactionID != 7 || len(state.Participants) != 1 ||
+		len(state.Participants[0].Devices) != 1 || !state.Participants[0].Devices[0].HasPID {
+		t.Fatalf("group state = %#v, present=%v", state, ok)
 	}
 }

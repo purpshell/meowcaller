@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/purpshell/meowcaller/signaling"
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 )
 
 func (e *engine) placeGroupCall(
@@ -225,6 +225,7 @@ func signalingParticipantsFromUpdate(update groupCallUpdate) []signaling.GroupCa
 		participants[i] = signaling.GroupCallParticipant{
 			JID: participant.JID, PN: participant.PN,
 			State: participant.State, Type: participant.Type,
+			AccountKind: participant.AccountKind, Name: participant.Name,
 			Devices: make([]signaling.GroupCallDevice, len(participant.Devices)),
 		}
 		for j, device := range participant.Devices {
@@ -404,7 +405,10 @@ func (e *engine) joinPublicCallLink(
 	}
 	media := selectedCallLinkMedia(opts)
 	requestID := e.nextCallNodeID()
-	node, err := signaling.BuildCallLinkJoin(token, signaling.CallLinkMedia(media), requestID)
+	node, err := signaling.BuildCallLinkJoinWithOptions(
+		token, signaling.CallLinkMedia(media), requestID,
+		signaling.CallLinkJoinOptions{PushName: opts.DisplayName},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -424,10 +428,6 @@ func (e *engine) joinPublicCallLink(
 		CallID: joined.CallID, CallCreator: joined.CallCreator,
 		WaitingRoomEnabled: joined.WaitingRoomEnabled,
 		InWaitingRoom:      joined.InWaitingRoom, IsAdmin: joined.IsAdmin,
-	}
-	if joined.Group != nil {
-		update := groupCallUpdateFromSignaling(*joined.Group)
-		result.Group = &update
 	}
 	phase := CallPhaseConnecting
 	if result.InWaitingRoom {
@@ -453,9 +453,8 @@ func (e *engine) joinPublicCallLink(
 		Capability: append([]byte(nil), signaling.CapabilityOffer...),
 	}
 	e.mu.Unlock()
-	if result.Group != nil {
-		e.applyGroupUpdate(*result.Group)
-	}
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/41
+	// Wait for group_update so an ACK roster cannot consume its transaction ID.
 	if result.InWaitingRoom {
 		e.startWaitingRoomHeartbeat(result.CallID)
 	}
@@ -480,7 +479,7 @@ func (e *engine) setApprovalRequired(ctx context.Context, callID string, enabled
 		return err
 	}
 	node := signaling.BuildWaitingRoomToggle(callID, creator, enabled, e.nextCallNodeID())
-	return e.transmitCallNode(ctx, node)
+	return e.requestWaitingRoomControl(ctx, node)
 }
 
 func (e *engine) controlWaitingParticipant(
@@ -504,7 +503,7 @@ func (e *engine) controlWaitingParticipant(
 	if admit {
 		node = signaling.BuildWaitingRoomAdmit(callID, creator, jid.ToNonAD(), e.nextCallNodeID())
 	}
-	return e.transmitCallNode(ctx, node)
+	return e.requestWaitingRoomControl(ctx, node)
 }
 
 func (e *engine) setHandRaised(callID string, raised bool) error {
