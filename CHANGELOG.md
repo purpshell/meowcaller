@@ -7,6 +7,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/cc-tables — `KAT-verified`
+
+- Synchronize lazy table initialization for concurrent cold encoder starts.
+  A fresh-process race regression checks identical encoded frames and decoding;
+  the existing byte-exact codec vectors remain unchanged.
+
 ### api/waiting-room-controls — `partial`
 
 - Host waiting-room controls now wait up to five seconds for the matching
