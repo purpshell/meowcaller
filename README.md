@@ -54,12 +54,28 @@ Core VoIP features are present:
 - Send and receive call emoji reactions over the dedicated RTC app-data stream
 - Experimental ad-hoc and group-bound group calls, including add/ring participant
 - Experimental reusable call links and approval waiting rooms
+- Experimental call-link guests: hosts see which waiting and connected people are guests and their names, and `NewGuestClient` joins a link without a WhatsApp account
 - Experimental participant video/reactions, arbitrary emoji, hand state, and screen-share state
 
 The experimental group surface uses the latest upstream `go.mau.fi/whatsmeow`;
 it does not require a fork. See the
 [group-call feature guide](docs/whatsapp-group-call-features.md) and the
 `examples/web` browser test console.
+
+Joining a call link as a guest (no paired account; the identity is one-time):
+
+```go
+g, err := meowcaller.NewGuestClient(ctx, "https://call.whatsapp.com/voice/TOKEN",
+    meowcaller.GuestOptions{Name: "Ada"})
+if err != nil {
+    return err
+}
+defer g.Close()
+if err = g.Connect(); err != nil {
+    return err
+}
+call, err := g.JoinCallLink(ctx, meowcaller.CallLinkOptions{})
+```
 
 Things that are not yet implemented:
 
