@@ -14,12 +14,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/purpshell/meowcaller/signaling"
 	"github.com/polymorfa/hypermeow"
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
+	"github.com/purpshell/meowcaller/signaling"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -32,11 +32,18 @@ import (
 type engine struct {
 	c *Client
 
-	mu              sync.Mutex
-	calls           map[string]*engineCall // keyed by call-id
-	sendCallNode    func(context.Context, waBinary.Node) error
-	requestCallNode func(context.Context, waBinary.Node, string) (*waBinary.Node, error)
-	rawCallHookErr  error
+	mu                     sync.Mutex
+	calls                  map[string]*engineCall // keyed by call-id
+	sendCallNode           func(context.Context, waBinary.Node) error
+	requestCallNode        func(context.Context, waBinary.Node, string) (*waBinary.Node, error)
+	rawCallHookErr         error
+	pendingLinkJoins       int
+	pendingLinkUpdates     []pendingLinkUpdate
+	pendingLinkUpdateBytes int
+	pendingLinkUpdateCount int
+	pendingLinkEnded       map[string]uint64
+	pendingLinkClosed      uint64
+	pendingLinkJoinSeq     uint64
 }
 
 // engineCall is the engine's per-call state: the public Call handle plus the inputs
@@ -63,6 +70,7 @@ type engineCall struct {
 	appDataTx         *appDataSender
 	rekeyPeer         func(string) error
 	group             bool
+	pendingLinkReplay bool
 	groupUpdate       *groupCallUpdate
 	groupReceivers    *participantReceiveRegistry
 	groupRawEpoch     []byte
@@ -1236,11 +1244,22 @@ func (e *engine) onTerminate(callID, reason string) {
 }
 
 func (e *engine) finishCall(callID, reason string) {
+	// Source of truth: https://github.com/purpshell/meowcaller/blob/a3a062ffdd46aed0129f335429d724dd1abb353c/engine.go#L1241-L1292
+	e.finishCallFor(callID, reason, nil)
+}
+
+func (e *engine) finishCallFor(callID, reason string, expected *Call) {
+	// Source of truth: https://github.com/purpshell/meowcaller/blob/a3a062ffdd46aed0129f335429d724dd1abb353c/engine.go#L1241-L1292
 	if callID == "" {
 		return
 	}
 	e.mu.Lock()
 	m := e.calls[callID]
+	if expected != nil && (m == nil || m.call != expected) {
+		e.mu.Unlock()
+		return
+	}
+	e.markPendingLinkEndedLocked(callID)
 	if m != nil {
 		delete(e.calls, callID)
 	}
