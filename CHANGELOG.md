@@ -7,6 +7,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### api/guest-client — `implemented`
+
+- Pin HyperMeow guest support to reviewed source `b61214a005d7`, including
+  bounded Signal-store retention and log-safe registration errors. This does
+  not establish live provider acceptance or change the guest client API.
+
 ### mlow/cc-tables — `KAT-verified`
 
 - Synchronize lazy table initialization for concurrent cold encoder starts.
