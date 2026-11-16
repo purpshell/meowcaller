@@ -229,3 +229,13 @@ func TestWaitingRoomPhaseTransitions(t *testing.T) {
 		t.Fatalf("waiting-room transition stopped at %v", session.Phase())
 	}
 }
+
+func TestAudioGuestLinksUseTheShippedVoicePath(t *testing.T) {
+	token, err := normalizeCallLinkToken("https://call.whatsapp.com/voice/TESTTOKEN")
+	if err != nil || token != "TESTTOKEN" {
+		t.Fatalf("voice guest link: %q %v", token, err)
+	}
+	if got := publicCallLink("TESTTOKEN", callLinkMediaAudio).URL; got != "https://call.whatsapp.com/voice/TESTTOKEN" {
+		t.Fatalf("audio link URL: %s", got)
+	}
+}

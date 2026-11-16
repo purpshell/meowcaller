@@ -64,7 +64,15 @@ type WaitingRoomUser struct {
 	JID   types.JID
 	PN    types.JID
 	State string
+	// AccountKind is the raw account_kind attribute; AccountKindGuest for a
+	// call-link guest.
+	AccountKind string
+	// Name is the user's push name, or the name a guest typed.
+	Name string
 }
+
+// IsGuest reports whether the waiting user has no WhatsApp account.
+func (u WaitingRoomUser) IsGuest() bool { return u.AccountKind == AccountKindGuest }
 
 // BuildCallLinkCreate builds the service request that creates a call link.
 func BuildCallLinkCreate(media CallLinkMedia, requestID string) (waBinary.Node, error) {
@@ -89,8 +97,29 @@ func BuildCallLinkQuery(token string, media CallLinkMedia, requestID string) (wa
 	})
 }
 
+// CallLinkJoinOptions are optional link_join attributes.
+type CallLinkJoinOptions struct {
+	// PushName is the display name other participants see. A call-link guest
+	// has no profile name, so it must send one; a paired account may omit it.
+	//
+	// Unverified in WhatsApp Web JS: link_join is built by the native VoIP
+	// module, which the stored bundles do not index. The attribute name
+	// matches the roster's push_name (WAWebHandleVoipCall.js:52-63).
+	PushName string
+}
+
 // BuildCallLinkJoin builds the media-capability request that joins a link.
 func BuildCallLinkJoin(token string, media CallLinkMedia, requestID string) (waBinary.Node, error) {
+	return BuildCallLinkJoinWithOptions(token, media, requestID, CallLinkJoinOptions{})
+}
+
+// BuildCallLinkJoinWithOptions builds a link_join request with optional attributes.
+func BuildCallLinkJoinWithOptions(
+	token string,
+	media CallLinkMedia,
+	requestID string,
+	opts CallLinkJoinOptions,
+) (waBinary.Node, error) {
 	// Source of truth: https://github.com/tulir/whatsmeow/blob/3775fbadf88fdf44ada62ae5c5db5d7cc6f26259/voip/call_link.go#L60-L94
 	if strings.TrimSpace(token) == "" {
 		return waBinary.Node{}, fmt.Errorf("signaling: call-link token is required")
@@ -108,8 +137,12 @@ func BuildCallLinkJoin(token string, media CallLinkMedia, requestID string) (waB
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "2"}},
 		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: append([]byte(nil), CapabilityOffer...)},
 	)
+	attrs := waBinary.Attrs{"token": token, "media": string(media)}
+	if name := strings.TrimSpace(opts.PushName); name != "" {
+		attrs["push_name"] = name
+	}
 	return buildCallServiceRequest(requestID, waBinary.Node{
-		Tag: "link_join", Attrs: waBinary.Attrs{"token": token, "media": string(media)}, Content: children,
+		Tag: "link_join", Attrs: attrs, Content: children,
 	})
 }
 
@@ -345,7 +378,8 @@ func parseWaitingRoomNode(node *waBinary.Node) (*WaitingRoom, error) {
 		userAttrs := child.AttrGetter()
 		user := WaitingRoomUser{
 			JID: userAttrs.JID("jid"), PN: userAttrs.OptionalJIDOrEmpty("user_pn"),
-			State: userAttrs.String("state"),
+			State:       userAttrs.String("state"),
+			AccountKind: userAttrs.OptionalString("account_kind"), Name: participantName(userAttrs),
 		}
 		if err = userAttrs.Error(); err != nil {
 			return nil, fmt.Errorf("signaling: parse waiting room user: %w", err)

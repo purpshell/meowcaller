@@ -3,8 +3,8 @@ package meowcaller
 import (
 	"bytes"
 
-	"github.com/purpshell/meowcaller/signaling"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 )
 
 // groupCallUpdate is the control-plane-neutral form of one authoritative
@@ -24,11 +24,13 @@ type groupCallUpdate struct {
 }
 
 type groupCallParticipant struct {
-	JID     types.JID
-	PN      types.JID
-	State   string
-	Type    string
-	Devices []groupCallDevice
+	JID         types.JID
+	PN          types.JID
+	State       string
+	Type        string
+	AccountKind string
+	Name        string
+	Devices     []groupCallDevice
 }
 
 type groupCallDevice struct {
@@ -105,7 +107,6 @@ type callLinkJoinResult struct {
 	WaitingRoomEnabled bool
 	InWaitingRoom      bool
 	IsAdmin            bool
-	Group              *groupCallUpdate
 }
 
 func groupCallUpdateFromSignaling(update signaling.GroupCallUpdate) groupCallUpdate {
@@ -122,6 +123,7 @@ func groupCallUpdateFromSignaling(update signaling.GroupCallUpdate) groupCallUpd
 		out.Participants[i] = groupCallParticipant{
 			JID: participant.JID, PN: participant.PN,
 			State: participant.State, Type: participant.Type,
+			AccountKind: participant.AccountKind, Name: participant.Name,
 			Devices: make([]groupCallDevice, len(participant.Devices)),
 		}
 		for j, device := range participant.Devices {

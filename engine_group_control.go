@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/purpshell/meowcaller/signaling"
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -28,6 +28,9 @@ func (e *engine) onUnknownCallEvent(node *waBinary.Node) {
 			return
 		}
 		update := groupCallUpdateFromSignaling(*parsed)
+		if e.deferPendingLinkUpdate(node, update) {
+			return
+		}
 		if e.applyGroupUpdate(update) && update.RekeyRequested {
 			if fanoutErr := e.distributeRequestedGroupEpoch(context.Background(), update); fanoutErr != nil {
 				e.c.log.Warn().Err(fanoutErr).Str("call_id", update.CallID).Msg("group rekey fanout failed")
@@ -76,7 +79,10 @@ func (e *engine) applyWaitingRoomUpdate(room signaling.WaitingRoom) {
 		Users:         make([]WaitingRoomUser, len(room.Users)),
 	}
 	for i, user := range room.Users {
-		state.Users[i] = WaitingRoomUser{JID: user.JID, PN: user.PN, State: user.State}
+		state.Users[i] = WaitingRoomUser{
+			JID: user.JID, PN: user.PN, State: user.State,
+			Guest: user.IsGuest(), Name: user.Name,
+		}
 	}
 	e.mu.Lock()
 	m := e.calls[room.CallID]
@@ -151,12 +157,17 @@ func callControlParticipant(envelope *signaling.CallControlEnvelope) types.JID {
 
 func (e *engine) applyGroupUpdate(update groupCallUpdate) bool {
 	// Source of truth: https://github.com/purpshell/meowcaller/blob/65b1dbf33f365db7392e438c3e3bf3651decb6cf/datasheets/group-media-receive.md#L83-L100
+	return e.applyGroupUpdateFor(update, nil)
+}
+
+func (e *engine) applyGroupUpdateFor(update groupCallUpdate, expected *Call) bool {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
 	if update.CallID == "" {
 		return false
 	}
 	e.mu.Lock()
 	m := e.calls[update.CallID]
-	if m == nil {
+	if m == nil || (expected != nil && m.call != expected) {
 		e.mu.Unlock()
 		e.c.log.Debug().
 			Str("call_id", update.CallID).
@@ -170,38 +181,47 @@ func (e *engine) applyGroupUpdate(update groupCallUpdate) bool {
 	}
 	stored := cloneGroupCallUpdate(update)
 	receivers := m.groupReceivers
-	e.mu.Unlock()
-
-	if receivers != nil {
-		if err := receivers.ApplyGroupUpdate(stored); err != nil {
-			e.c.log.Warn().Err(err).Str("call_id", update.CallID).Msg("apply group media roster failed")
-			return false
-		}
-	}
-
-	e.mu.Lock()
-	m = e.calls[update.CallID]
-	if m == nil {
-		e.mu.Unlock()
-		if receivers != nil {
-			receivers.clear()
-		}
-		return false
-	}
-	if m.groupUpdate != nil && update.TransactionID <= m.groupUpdate.TransactionID {
-		e.mu.Unlock()
-		return false
-	}
-	m.group = true
-	m.groupUpdate = &stored
-	if !update.CallCreator.IsEmpty() {
-		m.creator = update.CallCreator
-	}
-	m.from = types.NewJID(update.CallID, "call")
 	call := m.call
-	waitingRoomCancel := m.waitingRoomCancel
-	m.waitingRoomCancel = nil
-	e.mu.Unlock()
+
+	var waitingRoomCancel context.CancelFunc
+	installed := false
+	applyLocked := func(commit func()) error {
+		current := e.calls[update.CallID]
+		if current != m || current.call != call || current.groupReceivers != receivers ||
+			(current.groupUpdate != nil && update.TransactionID <= current.groupUpdate.TransactionID) {
+			return errors.New("meowcaller: group update target changed")
+		}
+		commit()
+		current.group = true
+		current.groupUpdate = &stored
+		if !update.CallCreator.IsEmpty() {
+			current.creator = update.CallCreator
+		}
+		current.from = types.NewJID(update.CallID, "call")
+		waitingRoomCancel = current.waitingRoomCancel
+		current.waitingRoomCancel = nil
+		installed = true
+		return nil
+	}
+	var err error
+	if receivers != nil {
+		e.mu.Unlock()
+		err = receivers.ApplyGroupUpdateTransaction(stored, func(commit func()) error {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return applyLocked(commit)
+		})
+	} else {
+		err = applyLocked(func() {})
+		e.mu.Unlock()
+	}
+	if err != nil {
+		e.c.log.Warn().Err(err).Str("call_id", update.CallID).Msg("apply group media roster failed")
+		return false
+	}
+	if !installed {
+		return false
+	}
 	e.c.log.Debug().
 		Str("call_id", update.CallID).
 		Uint32("transaction_id", update.TransactionID).
@@ -222,7 +242,7 @@ func (e *engine) applyGroupUpdate(update groupCallUpdate) bool {
 		}
 		call.setGroupState(groupCallStateFromUpdate(stored))
 	}
-	e.maybeStartMedia(update.CallID)
+	e.maybeStartMediaFor(update.CallID, call)
 	return true
 }
 
@@ -264,12 +284,17 @@ func (e *engine) ingestGroupEpoch(ctx context.Context, envelope *signaling.CallC
 
 func (e *engine) installGroupEpoch(callID string, transactionID uint32, rawKey []byte) error {
 	// Source of truth: https://github.com/purpshell/meowcaller/blob/d9df3eb9d96ea5260ffcd4036b6669499a1c1bc2/datasheets/voip-group-key-epoch-fanout.md#L85-L143
+	return e.installGroupEpochFor(callID, transactionID, rawKey, nil)
+}
+
+func (e *engine) installGroupEpochFor(callID string, transactionID uint32, rawKey []byte, expected *Call) error {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
 	if callID == "" || transactionID == 0 || len(rawKey) != 32 {
 		return errors.New("meowcaller: invalid group key epoch")
 	}
 	e.mu.Lock()
 	m := e.calls[callID]
-	if m == nil || !m.group {
+	if m == nil || !m.group || (expected != nil && m.call != expected) {
 		e.mu.Unlock()
 		return fmt.Errorf("meowcaller: unknown group call %s", callID)
 	}
@@ -287,43 +312,71 @@ func (e *engine) installGroupEpoch(callID string, transactionID uint32, rawKey [
 		}
 	}
 	receivers := m.groupReceivers
-	e.mu.Unlock()
-	if receivers != nil {
-		if err := receivers.ApplyGroupRawEpoch(transactionID, rawKey); err != nil {
+	call := m.call
+	applyLocked := func(commit func() error) error {
+		current := e.calls[callID]
+		if current != m || current.call != call || current.groupReceivers != receivers || !current.group {
+			return fmt.Errorf("meowcaller: group call %s changed during rekey", callID)
+		}
+		if current.hasGroupEpoch {
+			switch {
+			case transactionID < current.groupEpochTxID:
+				return nil
+			case transactionID == current.groupEpochTxID && bytes.Equal(current.groupRawEpoch, rawKey):
+				return nil
+			case transactionID == current.groupEpochTxID:
+				return fmt.Errorf("meowcaller: conflicting group epoch for transaction %d", transactionID)
+			}
+		}
+		if err := commit(); err != nil {
 			return err
 		}
+		clear(current.groupRawEpoch)
+		current.groupRawEpoch = bytes.Clone(rawKey)
+		current.groupEpochTxID = transactionID
+		current.hasGroupEpoch = true
+		return nil
 	}
-
-	e.mu.Lock()
-	m = e.calls[callID]
-	if m == nil || !m.group {
+	var err error
+	if receivers != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("meowcaller: group call %s ended during rekey", callID)
+		err = receivers.applyGroupRawEpochTransaction(transactionID, rawKey, func(commit func() error) error {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return applyLocked(commit)
+		})
+	} else {
+		err = applyLocked(func() error { return nil })
+		e.mu.Unlock()
 	}
-	if m.hasGroupEpoch {
-		switch {
-		case transactionID < m.groupEpochTxID:
-			e.mu.Unlock()
-			return nil
-		case transactionID == m.groupEpochTxID && bytes.Equal(m.groupRawEpoch, rawKey):
-			e.mu.Unlock()
-			return nil
-		case transactionID == m.groupEpochTxID:
-			e.mu.Unlock()
-			return fmt.Errorf("meowcaller: conflicting group epoch for transaction %d", transactionID)
-		}
+	if err != nil {
+		return err
 	}
-	clear(m.groupRawEpoch)
-	m.groupRawEpoch = bytes.Clone(rawKey)
-	m.groupEpochTxID = transactionID
-	m.hasGroupEpoch = true
-	e.mu.Unlock()
-	e.maybeStartMedia(callID)
+	e.maybeStartMediaFor(callID, call)
 	return nil
 }
 
 func (e *engine) distributeRequestedGroupEpoch(ctx context.Context, update groupCallUpdate) error {
 	// Source of truth: https://github.com/purpshell/meowcaller/blob/d9df3eb9d96ea5260ffcd4036b6669499a1c1bc2/datasheets/voip-group-key-epoch-fanout.md#L99-L162
+	return e.distributeRequestedGroupEpochFor(ctx, update, nil)
+}
+
+func (e *engine) distributeRequestedGroupEpochFor(ctx context.Context, update groupCallUpdate, expected *Call) error {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	check := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if m := e.calls[update.CallID]; expected != nil && (m == nil || m.call != expected) {
+			return errors.New("meowcaller: group rekey target changed")
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
 	self := e.c.wa.Store.GetLID()
 	recipients := groupRekeyRecipients(update, self)
 	if len(recipients) == 0 {
@@ -355,6 +408,10 @@ func (e *engine) distributeRequestedGroupEpoch(ctx context.Context, update group
 	}
 	var fanoutErrors []error
 	for i, node := range nodes {
+		if err := check(); err != nil {
+			clear(rawKey)
+			return err
+		}
 		if err := e.transmitCallNode(ctx, node); err != nil {
 			fanoutErrors = append(
 				fanoutErrors,
@@ -362,7 +419,7 @@ func (e *engine) distributeRequestedGroupEpoch(ctx context.Context, update group
 			)
 		}
 	}
-	if err := e.installGroupEpoch(update.CallID, update.TransactionID, rawKey); err != nil {
+	if err := e.installGroupEpochFor(update.CallID, update.TransactionID, rawKey, expected); err != nil {
 		fanoutErrors = append(fanoutErrors, fmt.Errorf("meowcaller: install local group epoch: %w", err))
 	}
 	clear(rawKey)

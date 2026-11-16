@@ -1,10 +1,12 @@
 package meowcaller
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -41,9 +43,14 @@ type videoReceiveState struct {
 // maybeStartMedia launches the media loop for callID once both the callKey and the relay
 // endpoint are known. It is idempotent — the loop starts exactly once per call.
 func (e *engine) maybeStartMedia(callID string) {
+	e.maybeStartMediaFor(callID, nil)
+}
+
+func (e *engine) maybeStartMediaFor(callID string, expected *Call) {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
 	e.mu.Lock()
 	m := e.calls[callID]
-	if m == nil || m.started {
+	if m == nil || m.started || (expected != nil && m.call != expected) {
 		e.mu.Unlock()
 		return
 	}
@@ -101,6 +108,7 @@ func (e *engine) maybeStartMedia(callID string) {
 	e.c.log.Info().Str("call_id", callID).Msg("starting media")
 	go func() {
 		defer clear(callKey)
+		defer e.releaseMediaRun(callID, m, call, cancel)
 		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, rd, inbound); err != nil {
 			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("media ended")
 		}
@@ -260,13 +268,15 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 
 	enc := mlow.NewMlowEncoder(mlow.WithLogger(log))
 	e.mu.Lock()
-	m := e.calls[callID]
+	m := e.mediaCallLocked(callID, call)
 	audioReceivers := (*participantReceiveRegistry)(nil)
 	var groupMode atomic.Bool
-	if m != nil {
-		audioReceivers = m.groupReceivers
-		groupMode.Store(m.group)
+	if m == nil {
+		e.mu.Unlock()
+		return errors.New("meowcaller: call changed during media startup")
 	}
+	audioReceivers = m.groupReceivers
+	groupMode.Store(m.group)
 	e.mu.Unlock()
 	if audioReceivers == nil {
 		audioReceivers, err = newParticipantReceiveRegistry(
@@ -282,93 +292,18 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		if err != nil {
 			return err
 		}
-		unpublishedReceivers := audioReceivers
-		defer func() {
-			if unpublishedReceivers != nil {
-				unpublishedReceivers.clear()
-			}
-		}()
-		if groupMode.Load() {
-			installed := false
-			for attempt := 0; attempt < groupRegistryInstallMaxAttempts; attempt++ {
-				if err = ctx.Err(); err != nil {
-					return err
-				}
-				e.mu.Lock()
-				current := e.calls[callID]
-				if current == nil || !current.group || current.groupUpdate == nil ||
-					!current.hasGroupEpoch || len(current.groupRawEpoch) != 32 {
-					e.mu.Unlock()
-					return fmt.Errorf("meowcaller: group media prerequisites changed during startup")
-				}
-				update := cloneGroupCallUpdate(*current.groupUpdate)
-				rawEpoch := append([]byte(nil), current.groupRawEpoch...)
-				transactionID := current.groupEpochTxID
-				e.mu.Unlock()
-
-				if err = audioReceivers.ApplyGroupUpdate(update); err == nil {
-					err = audioReceivers.ApplyGroupRawEpoch(transactionID, rawEpoch)
-				}
-				clear(rawEpoch)
-				if err != nil {
-					return fmt.Errorf("initialize group participant media: %w", err)
-				}
-
-				e.mu.Lock()
-				current = e.calls[callID]
-				if current == nil || !current.group {
-					e.mu.Unlock()
-					return fmt.Errorf("meowcaller: group call ended during media startup")
-				}
-				if current.groupReceivers != nil {
-					discarded := audioReceivers
-					audioReceivers = current.groupReceivers
-					e.mu.Unlock()
-					discarded.clear()
-					unpublishedReceivers = nil
-					installed = true
-					break
-				}
-				if current.groupUpdate != nil &&
-					current.groupUpdate.TransactionID <= update.TransactionID &&
-					current.groupEpochTxID <= transactionID {
-					current.groupReceivers = audioReceivers
-					e.mu.Unlock()
-					unpublishedReceivers = nil
-					installed = true
-					break
-				}
-				e.mu.Unlock()
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(groupRegistryInstallBackoff):
-				}
-			}
-			if !installed {
-				return fmt.Errorf(
-					"meowcaller: group media roster changed during %d startup attempts",
-					groupRegistryInstallMaxAttempts,
-				)
-			}
-		} else {
-			e.mu.Lock()
-			current := e.calls[callID]
-			if current == nil {
-				e.mu.Unlock()
-				return fmt.Errorf("meowcaller: direct call ended during media startup")
-			}
-			if current.groupReceivers == nil {
-				current.groupReceivers = audioReceivers
-				e.mu.Unlock()
-			} else {
-				discarded := audioReceivers
-				audioReceivers = current.groupReceivers
-				e.mu.Unlock()
-				discarded.clear()
-			}
-			unpublishedReceivers = nil
+		candidate := audioReceivers
+		audioReceivers, err = e.initializeMediaReceivers(ctx, callID, call, candidate)
+		if err != nil || audioReceivers != candidate {
+			candidate.clear()
 		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if audioReceivers.HasCommittedGroupUpdate() {
+		groupMode.Store(true)
 	}
 	audioPlayout := newAudioPlayoutBuffer()
 	var audioPlayoutMu sync.Mutex
@@ -491,14 +426,14 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			ping := stun.BuildWhatsappPing(tx, log)
 			allocateSent := false
 			e.mu.Lock()
-			currentCall := e.calls[callID]
+			currentCall := e.mediaCallLocked(callID, call)
 			if currentCall != nil && currentCall.group {
 				groupMode.Store(true)
 			}
 			e.mu.Unlock()
 			if groupMode.Load() {
 				e.mu.Lock()
-				current := e.calls[callID]
+				current := e.mediaCallLocked(callID, call)
 				var update *groupCallUpdate
 				if current != nil && current.groupUpdate != nil {
 					cloned := cloneGroupCallUpdate(*current.groupUpdate)
@@ -611,7 +546,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}
 	e.mu.Lock()
 	currentPeer := peerLID
-	if m := e.calls[callID]; m != nil {
+	if m := e.mediaCallLocked(callID, call); m != nil {
 		m.rekeyPeer = rekeyPeer
 		currentPeer = m.peerLID
 	}
@@ -624,7 +559,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	}
 	defer func() {
 		e.mu.Lock()
-		if m := e.calls[callID]; m != nil {
+		if m := e.mediaCallLocked(callID, call); m != nil {
 			m.rekeyPeer = nil
 		}
 		e.mu.Unlock()
@@ -674,7 +609,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		return ch.Send(packet)
 	})
 	e.mu.Lock()
-	if m := e.calls[callID]; m != nil {
+	if m := e.mediaCallLocked(callID, call); m != nil {
 		vsender.active = m.localVideo
 		vsender.sendGated = m.videoGate
 		m.videoTx = vsender
@@ -687,7 +622,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 		vsender.ch = nil
 		vsender.mu.Unlock()
 		e.mu.Lock()
-		if m := e.calls[callID]; m != nil {
+		if m := e.mediaCallLocked(callID, call); m != nil {
 			m.videoTx = nil
 			m.appDataTx = nil
 		}
@@ -698,7 +633,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 	var videoReception rtp.RtcpReceptionStatsSet
 	if groupMode.Load() {
 		e.mu.Lock()
-		current := e.calls[callID]
+		current := e.mediaCallLocked(callID, call)
 		var update *groupCallUpdate
 		if current != nil && current.groupUpdate != nil {
 			cloned := cloneGroupCallUpdate(*current.groupUpdate)
@@ -748,7 +683,7 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			case now := <-ticker.C:
 				nowMs := uint64(now.UnixMilli())
 				e.mu.Lock()
-				current := e.calls[callID]
+				current := e.mediaCallLocked(callID, call)
 				if current != nil && current.group {
 					groupMode.Store(true)
 				}
@@ -1553,4 +1488,104 @@ func rmsFloat32(f []float32) float64 {
 		sum += float64(s) * float64(s)
 	}
 	return math.Sqrt(sum / float64(len(f)))
+}
+
+func (e *engine) publishMediaReceivers(callID string, call *Call, candidate *participantReceiveRegistry, update *groupCallUpdate, epochTxID uint32) (*participantReceiveRegistry, bool, error) {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.mediaCallLocked(callID, call)
+	if current == nil {
+		return nil, false, errors.New("meowcaller: call changed during media startup")
+	}
+	if current.groupReceivers != nil {
+		return current.groupReceivers, true, nil
+	}
+	if current.group != (update != nil) {
+		return nil, false, nil
+	}
+	if update != nil && (current.groupUpdate == nil || current.groupUpdate.TransactionID > update.TransactionID || current.groupEpochTxID > epochTxID) {
+		return nil, false, nil
+	}
+	current.groupReceivers = candidate
+	return candidate, true, nil
+}
+
+// The caller holds e.mu.
+func (e *engine) mediaCallLocked(callID string, call *Call) *engineCall {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	m := e.calls[callID]
+	if m == nil || m.call != call {
+		return nil
+	}
+	return m
+}
+
+func (e *engine) initializeMediaReceivers(ctx context.Context, callID string, call *Call, candidate *participantReceiveRegistry) (*participantReceiveRegistry, error) {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	for attempt := 0; attempt < groupRegistryInstallMaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		current := e.mediaCallLocked(callID, call)
+		if current == nil {
+			e.mu.Unlock()
+			return nil, errors.New("meowcaller: call changed during media startup")
+		}
+		if current.groupReceivers != nil {
+			existing := current.groupReceivers
+			e.mu.Unlock()
+			return existing, nil
+		}
+		var update *groupCallUpdate
+		var rawEpoch []byte
+		var transactionID uint32
+		ready := !current.group
+		if current.group && current.groupUpdate != nil && current.hasGroupEpoch && len(current.groupRawEpoch) == 32 {
+			cloned := cloneGroupCallUpdate(*current.groupUpdate)
+			update = &cloned
+			rawEpoch = bytes.Clone(current.groupRawEpoch)
+			transactionID = current.groupEpochTxID
+			ready = true
+		}
+		e.mu.Unlock()
+		if ready {
+			if update != nil {
+				err := candidate.ApplyGroupUpdate(*update)
+				if err == nil {
+					err = candidate.ApplyGroupRawEpoch(transactionID, rawEpoch)
+				}
+				clear(rawEpoch)
+				if err != nil {
+					return nil, fmt.Errorf("initialize group participant media: %w", err)
+				}
+			}
+			published, installed, err := e.publishMediaReceivers(callID, call, candidate, update, transactionID)
+			if err != nil {
+				return nil, err
+			}
+			if installed {
+				return published, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(groupRegistryInstallBackoff):
+		}
+	}
+	return nil, fmt.Errorf("meowcaller: group media roster changed during %d startup attempts", groupRegistryInstallMaxAttempts)
+}
+
+func (e *engine) releaseMediaRun(callID string, owner *engineCall, call *Call, cancel context.CancelFunc) {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	cancel()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.mediaCallLocked(callID, call)
+	if current == owner {
+		current.started = false
+		current.cancel = nil
+	}
 }

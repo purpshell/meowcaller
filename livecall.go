@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purpshell/meowcaller/signaling"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/purpshell/meowcaller/signaling"
 )
 
 // Call is one live direct or group call. A direct call may become an ad-hoc group
@@ -62,7 +62,11 @@ type GroupCallParticipant struct {
 	PN         types.JID
 	State      string
 	HandRaised bool
-	Devices    []GroupCallDevice
+	// Guest is true for a call-link participant without a WhatsApp account.
+	Guest bool
+	// Name is the participant's push name, or the name a guest typed.
+	Name    string
+	Devices []GroupCallDevice
 }
 
 // GroupCallDevice is one participant device selected or considered by WhatsApp.
@@ -99,6 +103,10 @@ type WaitingRoomUser struct {
 	JID   types.JID
 	PN    types.JID
 	State string
+	// Guest is true for someone without a WhatsApp account.
+	Guest bool
+	// Name is the user's push name, or the name a guest typed.
+	Name string
 }
 
 // HandRaiseState is one participant's persistent raised/lowered state.
@@ -220,6 +228,7 @@ func groupCallStateFromUpdate(update groupCallUpdate) GroupCallState {
 		}
 		state.Participants[participantIndex] = GroupCallParticipant{
 			JID: participant.JID, PN: participant.PN, State: participant.State,
+			Guest: participant.AccountKind == signaling.AccountKindGuest, Name: participant.Name,
 			Devices: devices,
 		}
 	}
@@ -417,17 +426,18 @@ func (c *Call) OnWaitingRoomState(fn func(WaitingRoomState)) {
 	})
 }
 
-// SetApprovalRequired changes call-link approval requirements for an admin call.
+// SetApprovalRequired changes call-link approval requirements and waits for the
+// matching provider ACK. An unknown outcome must not be replayed automatically.
 func (c *Call) SetApprovalRequired(ctx context.Context, enabled bool) error {
 	return c.eng.setApprovalRequired(ctx, c.id, enabled)
 }
 
-// AdmitParticipant admits one waiting-room user.
+// AdmitParticipant admits one waiting-room user after a matching provider ACK.
 func (c *Call) AdmitParticipant(ctx context.Context, user string) error {
 	return c.eng.controlWaitingParticipant(ctx, c.id, user, true)
 }
 
-// DenyParticipant denies one waiting-room user.
+// DenyParticipant denies one waiting-room user after a matching provider ACK.
 func (c *Call) DenyParticipant(ctx context.Context, user string) error {
 	return c.eng.controlWaitingParticipant(ctx, c.id, user, false)
 }

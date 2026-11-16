@@ -6,11 +6,11 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/polymorfa/hypermeow/types"
 	"github.com/purpshell/meowcaller/mlow"
 	"github.com/purpshell/meowcaller/rtp"
 	"github.com/purpshell/meowcaller/srtp"
 	"github.com/rs/zerolog"
-	"github.com/polymorfa/hypermeow/types"
 )
 
 type participantAudioDecoder interface {
@@ -569,22 +569,31 @@ func (r *participantReceiveRegistry) attachSRTCPSender(sender *mediaSrtcpSender)
 // according to the authoritative group roster transaction.
 func (r *participantReceiveRegistry) ApplyGroupRawEpoch(transactionID uint32, rawKey []byte) error {
 	// Source of truth: https://github.com/purpshell/meowcaller/blob/cbe1446dabb5842362b1a4362d4100ec15d8254f/datasheets/group-media-key-epoch.md#L88-L120
+	return r.applyGroupRawEpochTransaction(transactionID, rawKey, func(commit func() error) error {
+		return commit()
+	})
+}
+
+func (r *participantReceiveRegistry) applyGroupRawEpochTransaction(transactionID uint32, rawKey []byte, apply func(func() error) error) error {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
 	if len(rawKey) != 32 {
 		return fmt.Errorf("meowcaller: group raw epoch has %d bytes, want 32", len(rawKey))
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.hasGroupUpdate || transactionID > r.transactionID {
-		if existing, ok := r.pendingEpochs[transactionID]; ok {
-			if bytes.Equal(existing, rawKey) {
-				return nil
+	return apply(func() error {
+		if !r.hasGroupUpdate || transactionID > r.transactionID {
+			if existing, ok := r.pendingEpochs[transactionID]; ok {
+				if bytes.Equal(existing, rawKey) {
+					return nil
+				}
+				return fmt.Errorf("meowcaller: conflicting group raw epoch for transaction %d", transactionID)
 			}
-			return fmt.Errorf("meowcaller: conflicting group raw epoch for transaction %d", transactionID)
+			r.pendingEpochs[transactionID] = bytes.Clone(rawKey)
+			return nil
 		}
-		r.pendingEpochs[transactionID] = bytes.Clone(rawKey)
-		return nil
-	}
-	return r.applyGroupRawEpochLocked(transactionID, rawKey)
+		return r.applyGroupRawEpochLocked(transactionID, rawKey)
+	})
 }
 
 func (r *participantReceiveRegistry) applyGroupRawEpochLocked(transactionID uint32, rawKey []byte) error {

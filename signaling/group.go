@@ -69,13 +69,39 @@ type GroupCallUpdate struct {
 	Relay          *GroupCallRelay
 }
 
+// AccountKindGuest marks a call-link participant who joined without a
+// WhatsApp account.
+//
+// Source of truth: WhatsApp Web 1053201649, WAWebVoipWaCallEnums.js:426-430
+// (wireStringToAccountKind maps "guest" to AccountKind.Guest).
+const AccountKindGuest = "guest"
+
 // GroupCallParticipant is one user in a group-call roster.
 type GroupCallParticipant struct {
-	JID     types.JID
-	PN      types.JID
-	State   string
-	Type    string
+	JID   types.JID
+	PN    types.JID
+	State string
+	Type  string
+	// AccountKind is the raw account_kind attribute; AccountKindGuest for a
+	// call-link guest, empty for an ordinary WhatsApp account.
+	AccountKind string
+	// Name is the participant's push name, or the name a guest typed.
+	Name    string
 	Devices []GroupCallDevice
+}
+
+// IsGuest reports whether the participant joined without a WhatsApp account.
+func (p GroupCallParticipant) IsGuest() bool { return p.AccountKind == AccountKindGuest }
+
+// participantName reads the display name the way WhatsApp Web does:
+// push_name, falling back to guest_name.
+//
+// Source of truth: WhatsApp Web 1053201649, WAWebHandleVoipCall.js:52-63.
+func participantName(attrs *waBinary.AttrUtility) string {
+	if name := attrs.OptionalString("push_name"); name != "" {
+		return name
+	}
+	return attrs.OptionalString("guest_name")
 }
 
 // GroupCallDevice is one participant device in a group-call roster.
@@ -401,6 +427,7 @@ func parseGroupParticipant(node *waBinary.Node) (GroupCallParticipant, error) {
 	participant := GroupCallParticipant{
 		JID: attrs.JID("jid"), PN: attrs.OptionalJIDOrEmpty("user_pn"),
 		State: attrs.String("state"), Type: attrs.OptionalString("type"),
+		AccountKind: attrs.OptionalString("account_kind"), Name: participantName(attrs),
 	}
 	if err := attrs.Error(); err != nil {
 		return participant, fmt.Errorf("signaling: parse group participant: %w", err)
