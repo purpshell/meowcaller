@@ -13,6 +13,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   bounded Signal-store retention and log-safe registration errors. This does
   not establish live provider acceptance or change the guest client API.
 
+### api/participant-audio — `implemented`
+
+- Added `Call.OnParticipantAudioFrame` for authenticated 16 kHz mono audio
+  with its participant, device, PID, SSRC and RTP timestamp before group mixing.
+  Callbacks own their sample buffer. Existing `Receive` output is unchanged.
+  The original `e121d029` fixture verifies six attributed decoded-tone directions
+  for both direct group offers and links. Its original dependency pins are
+  recorded in the datasheet; the new composition needs a separate native replay.
+  Managed native Inspector acceptance remains open.
+
 ### mlow/cc-tables — `KAT-verified`
 
 - Synchronize lazy table initialization for concurrent cold encoder starts.

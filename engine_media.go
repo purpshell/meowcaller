@@ -1021,6 +1021,15 @@ func (e *engine) runMedia(ctx context.Context, callID string, call *Call, callKe
 			e.c.diag.Emit("srtp", map[string]any{"event": "unprotect_failed", "ssrc": vh.Ssrc, "bytes": n})
 			continue
 		}
+		// Source of truth: https://github.com/purpshell/meowcaller/blob/612fd411dbc2011c0c5672d7a355b5ba3b8c7ea4/group_media_receive.go#L21-L31
+		if call != nil {
+			call.dispatchParticipantAudioFrame(ParticipantAudioFrame{
+				ParticipantID: audio.ParticipantID,
+				Sender:        audio.UserJID, Device: audio.DeviceJID,
+				PID: audio.PID, HasPID: audio.HasPID,
+				SSRC: audio.SSRC, Timestamp: audio.Timestamp, PCM: audio.PCM,
+			})
+		}
 		audioReception.Observe(audio.SSRC, vh.SequenceNumber, audio.Timestamp, uint64(time.Now().UnixMilli()), SampleRate)
 		e.c.diag.Emit("rtp", map[string]any{
 			"event": "in", "ssrc": audio.SSRC, "seq": vh.SequenceNumber,
