@@ -108,6 +108,7 @@ func (e *engine) maybeStartMediaFor(callID string, expected *Call) {
 	e.c.log.Info().Str("call_id", callID).Msg("starting media")
 	go func() {
 		defer clear(callKey)
+		defer e.releaseMediaRun(callID, m, call, cancel)
 		if err := e.runMedia(mctx, callID, call, callKey, selfLID, peerLID, rd, inbound); err != nil {
 			e.c.log.Warn().Err(err).Str("call_id", callID).Msg("media ended")
 		}
@@ -1575,4 +1576,16 @@ func (e *engine) initializeMediaReceivers(ctx context.Context, callID string, ca
 		}
 	}
 	return nil, fmt.Errorf("meowcaller: group media roster changed during %d startup attempts", groupRegistryInstallMaxAttempts)
+}
+
+func (e *engine) releaseMediaRun(callID string, owner *engineCall, call *Call, cancel context.CancelFunc) {
+	// Source of truth: https://github.com/purpshell/meowcaller/pull/51
+	cancel()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.mediaCallLocked(callID, call)
+	if current == owner {
+		current.started = false
+		current.cancel = nil
+	}
 }
