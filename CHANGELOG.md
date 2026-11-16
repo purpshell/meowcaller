@@ -24,6 +24,10 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   Failed joins clear pending relay credentials, and termination prevents replay.
   Synthetic ordering, identity, resource-bound and cleanup regressions pass;
   live provider ordering remains unverified.
+- Media setup rechecks Call ownership when publishing receivers. A direct-to-group
+  transition installs the current roster and epoch before publication. Failed
+  media runs release their startup flag and cancel their own workers so later
+  authority updates can start media again without resetting a replacement Call.
 - Composed the equal-transaction join fix from PR #41. A join ACK no longer
   installs its partial roster before the following group update can supply
   device PIDs, relay details and the rekey request. The regression reproduces

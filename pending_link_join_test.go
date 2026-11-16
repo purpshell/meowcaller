@@ -548,3 +548,60 @@ func TestDirectReceiverPublicationRejectsPromotion(t *testing.T) {
 		t.Fatal("promoted registry lacks the current roster or shared epoch")
 	}
 }
+
+func TestMediaRunReleasePreservesReplacementAndAllowsRetry(t *testing.T) {
+	eng, old, creator := testGroupEngine("JOIN")
+	owner := eng.calls["JOIN"]
+	owner.started = true
+	ctx, cancel := context.WithCancel(context.Background())
+	owner.cancel = cancel
+	eng.releaseMediaRun("JOIN", owner, old, cancel)
+	if ctx.Err() == nil || owner.started || owner.cancel != nil {
+		t.Fatal("failed media run retained its startup ownership")
+	}
+	fresh := &Call{eng: eng, id: "JOIN", peer: creator, phase: CallPhaseConnecting}
+	owner.call = fresh
+	owner.started = true
+	replacementCtx, replacementCancel := context.WithCancel(context.Background())
+	defer replacementCancel()
+	owner.cancel = replacementCancel
+	eng.releaseMediaRun("JOIN", owner, old, cancel)
+	if replacementCtx.Err() != nil || !owner.started || owner.cancel == nil {
+		t.Fatal("old media release reset the replacement run")
+	}
+}
+
+func TestMediaStartupFailureCanStartAgain(t *testing.T) {
+	eng, call, _ := testGroupEngine("JOIN")
+	var logs bytes.Buffer
+	eng.c.log = zerolog.New(&logs)
+	owner := eng.calls["JOIN"]
+	owner.group = false
+	owner.callKey = iota32()
+	owner.relay = &relayData{}
+	owner.selfLID = mediaTestJID("111111111111111", 14).String()
+	owner.peerLID = mediaTestJID("222222222222222", 0).String()
+	for range 2 {
+		eng.maybeStartMediaFor("JOIN", call)
+		deadline := time.After(5 * time.Second)
+		ticker := time.NewTicker(time.Millisecond)
+		for {
+			eng.mu.Lock()
+			released := !owner.started && owner.cancel == nil
+			eng.mu.Unlock()
+			if released {
+				break
+			}
+			select {
+			case <-deadline:
+				ticker.Stop()
+				t.Fatal("media startup failure did not release ownership")
+			case <-ticker.C:
+			}
+		}
+		ticker.Stop()
+	}
+	if strings.Count(logs.String(), "starting media") != 2 || strings.Count(logs.String(), "media ended") != 2 {
+		t.Fatal("later startup did not run after an endpoint-free failure")
+	}
+}

@@ -65,7 +65,9 @@ preparation. Rekey installation uses the same registry-then-engine lock order;
 rekey sends and media startup also reject a replaced public Call. Media receiver publication, sender attachment and cleanup also require the original
 public Call. If a direct call becomes a group call during receiver construction,
 the existing bounded startup loop reloads and installs the current group roster
-and epoch before publishing the registry. A send already in progress cannot be withdrawn.
+and epoch before publishing the registry. A completed or failed media run cancels
+its workers and releases startup ownership only for its original Call, allowing
+later authority updates to trigger another startup. A send already in progress cannot be withdrawn.
 
 ## Verification
 
