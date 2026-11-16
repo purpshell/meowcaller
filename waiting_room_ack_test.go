@@ -87,3 +87,21 @@ func TestWaitingRoomControlRejectsUnrelatedAck(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitingRoomControlBoundsBackgroundContext(t *testing.T) {
+	eng, call, _ := testGroupEngine("GROUP")
+	attempts := 0
+	eng.requestCallNode = func(ctx context.Context, _ waBinary.Node, _ string) (*waBinary.Node, error) {
+		attempts++
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > 5*time.Second {
+			return nil, errors.New("transport received no bounded control deadline")
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	err := call.SetApprovalRequired(context.Background(), true)
+	if !errors.Is(err, ErrWaitingRoomControlUnknown) || !errors.Is(err, context.DeadlineExceeded) || attempts != 1 {
+		t.Fatalf("background deadline outcome: %v, attempts=%d", err, attempts)
+	}
+}

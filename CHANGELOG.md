@@ -31,6 +31,11 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ### api/call-link-update-order — `partial`
 
+- Retain bounded early group snapshots only during active link joins, then
+  replay the ACK's exact call and creator after installing the public Call.
+  Failed joins clear pending relay credentials, and termination prevents replay.
+  Synthetic ordering, identity, resource-bound and cleanup regressions pass;
+  live provider ordering remains unverified.
 - Composed the equal-transaction join fix from PR #41. A join ACK no longer
   installs its partial roster before the following group update can supply
   device PIDs, relay details and the rekey request. The regression reproduces

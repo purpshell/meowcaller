@@ -412,6 +412,11 @@ func (e *engine) joinPublicCallLink(
 	if err != nil {
 		return nil, err
 	}
+	joinID, err := e.beginPendingLinkJoin()
+	if err != nil {
+		return nil, err
+	}
+	defer e.endPendingLinkJoin()
 	response, err := e.requestCall(ctx, node, requestID)
 	if err != nil {
 		return nil, err
@@ -437,8 +442,17 @@ func (e *engine) joinPublicCallLink(
 	call.setWaitingRoomState(waitingRoomStateFromJoin(&result))
 
 	e.mu.Lock()
+	queued, ended := e.takePendingLinkUpdatesLocked(result.CallID, result.CallCreator, joinID)
+	if ended {
+		e.mu.Unlock()
+		for i := range queued {
+			e.releasePendingLinkUpdate(&queued[i])
+		}
+		return nil, errors.New("meowcaller: call ended before link join completed")
+	}
 	m := e.entry(result.CallID)
 	m.call = call
+	m.pendingLinkReplay = true
 	m.group = true
 	m.selfLID = e.c.wa.Store.GetLID().String()
 	m.peerLID = result.CallCreator.String()
@@ -455,7 +469,10 @@ func (e *engine) joinPublicCallLink(
 	e.mu.Unlock()
 	// Source of truth: https://github.com/purpshell/meowcaller/pull/41
 	// Wait for group_update so an ACK roster cannot consume its transaction ID.
-	if result.InWaitingRoom {
+	if err := e.replayPendingLinkUpdates(ctx, m, call, joinID, queued); err != nil {
+		return nil, err
+	}
+	if call.State() == CallPhaseWaitingRoom {
 		e.startWaitingRoomHeartbeat(result.CallID)
 	}
 	return call, nil
