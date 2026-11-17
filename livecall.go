@@ -31,6 +31,7 @@ type Call struct {
 	onVideoState              func(VideoState)
 	onVideoKeyframeRequest    func()
 	onParticipantVideoFrame   func(ParticipantVideoFrame)
+	onParticipantAudioFrame   func(ParticipantAudioFrame)
 	onReaction                func(CallReaction)
 	groupState                *GroupCallState
 	onGroupState              func(GroupCallState)

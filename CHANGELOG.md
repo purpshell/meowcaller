@@ -7,6 +7,33 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### api/guest-client — `implemented`
+
+- Compose current HyperMeow main through guest revision `7092234f5cc0`, including
+  the existing connection-scoped CAT failure producer. Missing refresh callbacks
+  now reach the runner lifecycle guard; guest registration and key-store behavior
+  are unchanged. This dependency update does not establish native acceptance.
+
+- Pin HyperMeow guest support to reviewed source `b61214a005d7`, including
+  bounded Signal-store retention and log-safe registration errors. This does
+  not establish live provider acceptance or change the guest client API.
+
+### api/participant-audio — `implemented`
+
+- Added `Call.OnParticipantAudioFrame` for authenticated 16 kHz mono audio
+  with its participant, device, PID, SSRC and RTP timestamp before group mixing.
+  Callbacks own their sample buffer. Existing `Receive` output is unchanged.
+  The original `e121d029` fixture verifies six attributed decoded-tone directions
+  for both direct group offers and links. Its original dependency pins are
+  recorded in the datasheet; the new composition needs a separate native replay.
+  Managed native Inspector acceptance remains open.
+
+### mlow/cc-tables — `KAT-verified`
+
+- Synchronize lazy table initialization for concurrent cold encoder starts.
+  A fresh-process race regression checks identical encoded frames and decoding;
+  the existing byte-exact codec vectors remain unchanged.
+
 ### api/waiting-room-controls — `partial`
 
 - Host waiting-room controls now wait up to five seconds for the matching
