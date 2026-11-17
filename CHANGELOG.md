@@ -9,6 +9,11 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ### api/guest-client — `implemented`
 
+- Compose current HyperMeow main through guest revision `7092234f5cc0`, including
+  the existing connection-scoped CAT failure producer. Missing refresh callbacks
+  now reach the runner lifecycle guard; guest registration and key-store behavior
+  are unchanged. This dependency update does not establish native acceptance.
+
 - Pin HyperMeow guest support to reviewed source `b61214a005d7`, including
   bounded Signal-store retention and log-safe registration errors. This does
   not establish live provider acceptance or change the guest client API.
