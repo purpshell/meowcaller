@@ -7,6 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### player/reframe — `implemented`
+
+- `Player` now hands the encoder exactly `FrameSamples` per tick whatever length
+  its source yields: longer frames are split across ticks, shorter ones joined, a
+  final partial frame zero-padded. Before, any other length made `Encode` fail and
+  the send loop skipped the tick, so nothing at all was transmitted. Easy to hit
+  with a loopback or bridge source fed from a sink, because the receive path
+  delivers multi-frame blocks (the `0x92` SplitRed container of video calls,
+  timestamp-aligned gaps). Found live: an echo on an inbound video call was silent
+  to the caller until the consumer re-cut the frames itself. Unit tests cover
+  split, join, live-source underrun, EOF padding and source replacement.
+
 ### media/group-runtime — `KAT-verified`
 
 - Hardened live group-call teardown by closing and detaching audio endpoints,

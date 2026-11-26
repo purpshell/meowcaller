@@ -27,6 +27,10 @@ type Player struct {
 	src      AudioSource
 	state    PlayerState
 	onFinish func()
+	// carry holds source samples not yet sent: sources may yield frames of any length
+	// (a sink-fed loopback gets the decoder's multi-frame blocks), but the encoder only
+	// takes FrameSamples per tick.
+	carry []float32
 }
 
 // NewPlayer returns an idle Player.
@@ -41,6 +45,7 @@ func (p *Player) Play(src AudioSource) {
 	old := p.src
 	p.src = src
 	p.state = PlayerPlaying
+	p.carry = nil
 	p.mu.Unlock()
 	if old != nil {
 		_ = old.Close()
@@ -71,6 +76,7 @@ func (p *Player) Stop() {
 	old := p.src
 	p.src = nil
 	p.state = PlayerIdle
+	p.carry = nil
 	p.mu.Unlock()
 	if old != nil {
 		_ = old.Close()
@@ -92,9 +98,13 @@ func (p *Player) OnFinish(fn func()) {
 	p.mu.Unlock()
 }
 
-// nextFrame is pulled by the engine's send loop each frame interval. It returns the
-// next source frame while Playing, or nil to send silence (idle/paused/between
-// sources). On source EOF it goes Idle and fires OnFinish (outside the lock).
+// nextFrame is pulled by the engine's send loop each frame interval. It returns exactly
+// FrameSamples samples while Playing, or nil to send silence (idle/paused/between
+// sources, or a live source with nothing buffered yet). Source frames of any other
+// length are re-cut: longer ones are split across ticks and shorter ones are joined,
+// because the encoder rejects anything but FrameSamples and the tick would otherwise
+// carry no packet at all. On source EOF it goes Idle and fires OnFinish (outside the
+// lock); a final partial frame is zero-padded.
 func (p *Player) nextFrame() []float32 {
 	p.mu.Lock()
 	if p.state != PlayerPlaying || p.src == nil {
@@ -102,28 +112,74 @@ func (p *Player) nextFrame() []float32 {
 		return nil
 	}
 	src := p.src
+	carry := p.carry
+	p.carry = nil
 	p.mu.Unlock()
 
-	frame, err := src.ReadFrame()
-	if err == nil {
-		return frame
+	for len(carry) < FrameSamples {
+		frame, err := src.ReadFrame()
+		if err != nil {
+			p.finish(src)
+			if err != io.EOF {
+				// A decode error still ends playback; buffered samples are dropped.
+				return nil
+			}
+			carry = append(carry, frame...)
+			if len(carry) == 0 {
+				return nil
+			}
+			return padFrame(carry)
+		}
+		if frame == nil {
+			break
+		}
+		if len(carry) == 0 && len(frame) == FrameSamples {
+			return frame
+		}
+		carry = append(carry, frame...)
 	}
-	// Source exhausted (or errored): go idle, close it, and fire OnFinish once.
+	if len(carry) < FrameSamples {
+		p.keepCarry(src, carry)
+		return nil
+	}
+	out := make([]float32, FrameSamples)
+	copy(out, carry)
+	p.keepCarry(src, carry[FrameSamples:])
+	return out
+}
+
+// keepCarry stores leftover samples for the next tick unless src was replaced meanwhile.
+func (p *Player) keepCarry(src AudioSource, rest []float32) {
+	if len(rest) == 0 {
+		return
+	}
 	p.mu.Lock()
-	var finish func()
+	if p.src == src {
+		p.carry = append([]float32(nil), rest...)
+	}
+	p.mu.Unlock()
+}
+
+// finish handles an exhausted (or failed) source: go idle, close it, fire OnFinish once.
+func (p *Player) finish(src AudioSource) {
+	p.mu.Lock()
+	var onFinish func()
 	if p.src == src { // still the active source (not replaced concurrently)
 		p.src = nil
 		p.state = PlayerIdle
-		finish = p.onFinish
+		p.carry = nil
+		onFinish = p.onFinish
 	}
 	p.mu.Unlock()
 	_ = src.Close()
-	if finish != nil {
-		finish()
+	if onFinish != nil {
+		onFinish()
 	}
-	if err != io.EOF {
-		// A decode error still ends playback; the frame (if any) is dropped.
-		return nil
-	}
-	return frame // may be a final padded frame or nil
+}
+
+// padFrame returns the first FrameSamples of samples, zero-padding a short tail.
+func padFrame(samples []float32) []float32 {
+	out := make([]float32, FrameSamples)
+	copy(out, samples)
+	return out
 }
